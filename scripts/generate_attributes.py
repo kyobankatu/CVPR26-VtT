@@ -13,8 +13,21 @@ import argparse
 import json
 import os
 import re
+import types
+
+# ---------------------------------------------------------------------------
+# Compatibility patch: torch.compiler was added in PyTorch 2.1.
+# transformers >= 4.46 references it at import time via flex_attention.py.
+# Stub it out before importing transformers so the import succeeds.
+# ---------------------------------------------------------------------------
 import torch
-from transformers import pipeline
+if not hasattr(torch, "compiler"):
+    _compiler_stub = types.SimpleNamespace(
+        disable=lambda *args, **kwargs: (lambda fn: fn)
+    )
+    torch.compiler = _compiler_stub
+
+from transformers import AutoModelForCausalLM, AutoTokenizer  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Class name lists (mirrors VtT.py:run_lora)
@@ -55,18 +68,15 @@ LABEL_NAMES = {
 }
 
 
-def parse_json_list(text: str, num_attrs: int, class_name: str) -> list[str]:
+def parse_json_list(text: str, num_attrs: int, class_name: str) -> list:
     """Extract a JSON list from LLM output; fall back to class_name repeated."""
-    # strip markdown code fences
     text = re.sub(r"```(?:json)?", "", text).strip()
-    # find the first [...] block
     match = re.search(r"\[.*?\]", text, re.DOTALL)
     if match:
         try:
             attrs = json.loads(match.group())
             if isinstance(attrs, list) and len(attrs) >= 1:
                 attrs = [str(a).strip() for a in attrs]
-                # pad or truncate to num_attrs
                 while len(attrs) < num_attrs:
                     attrs.append(class_name)
                 return attrs[:num_attrs]
@@ -76,25 +86,30 @@ def parse_json_list(text: str, num_attrs: int, class_name: str) -> list[str]:
     return [class_name] * num_attrs
 
 
-def generate_attributes(class_names: list[str], pipe, num_attrs: int) -> dict:
+def generate_attributes(class_names, model, tokenizer, num_attrs):
     result = {}
     for cls_name in class_names:
         display = cls_name.replace("_", " ")
-        messages = [
-            {
-                "role": "user",
-                "content": (
-                    f"List {num_attrs} distinct, domain-independent visual semantic attributes "
-                    f"for the class '{display}'. "
-                    "Return ONLY a JSON list of strings."
-                ),
-            }
-        ]
-        out = pipe(messages, max_new_tokens=128, temperature=0.1, do_sample=False)
-        generated = out[0]["generated_text"]
-        # pipeline returns full conversation; take the last assistant turn
-        if isinstance(generated, list):
-            generated = generated[-1].get("content", "")
+        prompt = (
+            f"List {num_attrs} distinct, domain-independent visual semantic attributes "
+            f"for the class '{display}'. "
+            "Return ONLY a JSON list of strings."
+        )
+        messages = [{"role": "user", "content": prompt}]
+        text = tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        inputs = tokenizer(text, return_tensors="pt").to(model.device)
+        with torch.no_grad():
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=128,
+                temperature=0.1,
+                do_sample=False,
+            )
+        generated = tokenizer.decode(
+            outputs[0][inputs.input_ids.shape[1]:], skip_special_tokens=True
+        )
         attrs = parse_json_list(generated, num_attrs, cls_name)
         print(f"  {cls_name}: {attrs}")
         result[cls_name] = attrs
@@ -110,9 +125,8 @@ def main():
     parser.add_argument("--model", default="Qwen/Qwen3.5-9B")
     args = parser.parse_args()
 
-    os.makedirs(os.path.dirname(args.output), exist_ok=True)
+    os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
 
-    # Load existing output to allow incremental runs
     if os.path.exists(args.output):
         with open(args.output) as f:
             all_attrs = json.load(f)
@@ -124,10 +138,8 @@ def main():
     all_classes = []
     for ds in datasets:
         all_classes.extend(LABEL_NAMES[ds])
-    # deduplicate while preserving order
     seen = set()
     unique_classes = [c for c in all_classes if not (c in seen or seen.add(c))]
-    # skip already generated
     to_generate = [c for c in unique_classes if c not in all_attrs]
     print(f"Generating attributes for {len(to_generate)} classes "
           f"(skipping {len(unique_classes) - len(to_generate)} already done)")
@@ -137,14 +149,13 @@ def main():
         return
 
     print(f"Loading model {args.model} ...")
-    pipe = pipeline(
-        "text-generation",
-        model=args.model,
-        device_map="auto",
-        dtype=torch.bfloat16,
+    tokenizer = AutoTokenizer.from_pretrained(args.model)
+    model = AutoModelForCausalLM.from_pretrained(
+        args.model, device_map="auto", dtype=torch.bfloat16
     )
+    model.eval()
 
-    new_attrs = generate_attributes(to_generate, pipe, args.num_attrs)
+    new_attrs = generate_attributes(to_generate, model, tokenizer, args.num_attrs)
     all_attrs.update(new_attrs)
 
     with open(args.output, "w") as f:
