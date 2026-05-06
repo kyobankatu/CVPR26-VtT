@@ -57,6 +57,8 @@ LABEL_NAMES = {
 
 def parse_json_list(text: str, num_attrs: int, class_name: str) -> list:
     """Extract a JSON list from LLM output; fall back to class_name repeated."""
+    # strip Qwen3 thinking blocks before parsing
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
     text = re.sub(r"```(?:json)?", "", text).strip()
     match = re.search(r"\[.*?\]", text, re.DOTALL)
     if match:
