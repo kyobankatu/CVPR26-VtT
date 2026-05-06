@@ -89,13 +89,24 @@ def generate_attributes(class_names, pipe, num_attrs):
                 ),
             }
         ]
-        out = pipe(messages, max_new_tokens=128, temperature=0.1, do_sample=False)
-        generated = out[0]["generated_text"]
+        out = pipe(
+            messages,
+            max_new_tokens=256,
+            temperature=0.1,
+            do_sample=False,
+            return_full_text=False,
+        )
+        raw = out[0]["generated_text"]
         if len(result) == 0:
-            print(f"  [debug] raw type: {type(generated)}")
-            print(f"  [debug] raw output: {repr(generated)[:500]}")
-        if isinstance(generated, list):
-            generated = generated[-1].get("content", "")
+            print(f"  [debug] raw type: {type(raw)}", flush=True)
+            print(f"  [debug] raw repr: {repr(raw)[:800]}", flush=True)
+        # return_full_text=False returns a string (new tokens only)
+        if isinstance(raw, list):
+            # fallback: full conversation list — take last assistant turn
+            last = raw[-1]
+            generated = last.get("content") or last.get("text") or str(last)
+        else:
+            generated = str(raw)
         attrs = parse_json_list(generated, num_attrs, cls_name)
         print(f"  {cls_name}: {attrs}")
         result[cls_name] = attrs
