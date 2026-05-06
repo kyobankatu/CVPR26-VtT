@@ -91,6 +91,9 @@ def generate_attributes(class_names, pipe, num_attrs):
         ]
         out = pipe(messages, max_new_tokens=128, temperature=0.1, do_sample=False)
         generated = out[0]["generated_text"]
+        if len(result) == 0:
+            print(f"  [debug] raw type: {type(generated)}")
+            print(f"  [debug] raw output: {repr(generated)[:500]}")
         if isinstance(generated, list):
             generated = generated[-1].get("content", "")
         attrs = parse_json_list(generated, num_attrs, cls_name)
