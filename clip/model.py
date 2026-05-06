@@ -396,14 +396,15 @@ class CLIP(nn.Module):
         return self.visual(image.type(self.dtype),more_token, ret_all)
 
     def encode_text(self, text, inject=None, ret_all=False):
-        if(inject != None):
-            x = self.token_embedding(text).type(self.dtype)
-            x[:,5] = inject
-        else:
-            x = self.token_embedding(text).type(self.dtype)  # [batch_size, n_ctx, d_model]
-        # if(inject != None):
-        #     #inject = inject.unsqueeze(1)
-        #     x[:,idx+1,:] = inject
+        x = self.token_embedding(text).type(self.dtype)  # [batch_size, n_ctx, d_model]
+        if inject is not None:
+            if inject.dim() == 2:
+                # single absorb token: (batch, dim) -> position 5
+                x[:, 5] = inject
+            else:
+                # multi-head absorb tokens: (batch, K, dim) -> positions 5..5+K-1
+                K = inject.size(1)
+                x[:, 5:5 + K] = inject
         x = x + self.positional_embedding.type(self.dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
         if(ret_all == False):

@@ -45,6 +45,9 @@ def get_arguments():
     parser.add_argument('--episodes', type=int, default=400)
     parser.add_argument('--beta', type=float, default=7)
     parser.add_argument('--grad_steps', type=int, default=50)
+    parser.add_argument('--gamma', type=float, default=0.1, help='weight of orthogonal loss L_ortho')
+    parser.add_argument('--num_attrs', type=int, default=5, help='number of semantic attributes per class (K)')
+    parser.add_argument('--attr_path', type=str, default='data/semantic_attributes.json', help='path to pre-generated attribute JSON')
 
     args = parser.parse_args()
 

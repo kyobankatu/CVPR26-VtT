@@ -1,3 +1,5 @@
+import json
+import os
 import torch
 import torch.nn.functional as F
 
@@ -44,6 +46,36 @@ class Mamba_Net(nn.Module):
         return ret
 
 _tokenizer = _Tokenizer()
+
+
+class OrthogonalDecomposition(nn.Module):
+    """Decomposes visual feature V into V_semantic and V_domain.
+
+    V_semantic = proj(V), V_domain = V - V_semantic.
+    Orthogonality is enforced by construction (not by loss alone).
+    """
+    def __init__(self, dim=512):
+        super().__init__()
+        self.proj_semantic = nn.Linear(dim, dim, bias=False)
+
+    def forward(self, v):
+        v_semantic = self.proj_semantic(v)
+        v_domain = v - v_semantic
+        return v_semantic, v_domain
+
+
+class MultiHeadTIA(nn.Module):
+    """Projects V_semantic into K absorber tokens for multi-head text injection."""
+    def __init__(self, dim=512, num_attrs=5):
+        super().__init__()
+        self.num_attrs = num_attrs
+        self.dim = dim
+        self.proj = nn.Linear(dim, num_attrs * dim, bias=False)
+
+    def forward(self, v_semantic):
+        batch = v_semantic.size(0)
+        return self.proj(v_semantic).view(batch, self.num_attrs, self.dim)
+
 
 def prograd_backward_and_update(model, optim, scaler, loss_a, loss_b, lambda_=1, names=None):
     # loss_b not increase is okay
@@ -212,6 +244,15 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
     import copy
     import numpy as np
     VALIDATION = False
+
+    if not os.path.exists(args.attr_path):
+        raise FileNotFoundError(
+            f"Semantic attribute file not found: {args.attr_path}\n"
+            "Run scripts/generate_attributes.py first."
+        )
+    with open(args.attr_path) as f:
+        semantic_attrs = json.load(f)
+
     total_iters = args.epochs
     zs_acc_list = []
     fine_acc_list = []
@@ -232,11 +273,15 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
         Used_beta = args.beta ###
 
         clip_model = copy.deepcopy(clip_model_zs)
-        mamba_net= Mamba_Net()
-        mamba_net = mamba_net.cuda()
-        mamba_params = []
-        for name, param in mamba_net.named_parameters():
-            mamba_params.append(param)
+        mamba_net = Mamba_Net().cuda()
+        ortho_decomp = OrthogonalDecomposition(dim=512).cuda()
+        tia_head = MultiHeadTIA(dim=512, num_attrs=args.num_attrs).cuda()
+
+        mamba_params = (
+            list(mamba_net.parameters())
+            + list(ortho_decomp.parameters())
+            + list(tia_head.parameters())
+        )
 
         lora_parameters = get_lora_parameters(clip_model)
 
@@ -279,7 +324,19 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
                 emp_texts = clip.tokenize(emp_full_texts).cuda()
                 emp_class_embeddings, emp_class_embeddings_all = clip_model.encode_text(emp_texts, ret_all = True)
             text_features = class_embeddings/class_embeddings.norm(dim=-1, keepdim=True)
-            
+
+            # Pre-compute text attribute features: (N_classes, K, dim)
+            attr_feat_list = []
+            for cls_name in class_texts:
+                attrs = semantic_attrs.get(cls_name, [cls_name] * args.num_attrs)
+                attrs = attrs[:args.num_attrs]
+                with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
+                    attr_tokens = clip.tokenize(attrs).cuda()
+                    attr_feats = clip_model.encode_text(attr_tokens)  # (K, dim)
+                attr_feats = attr_feats / attr_feats.norm(dim=-1, keepdim=True)
+                attr_feat_list.append(attr_feats)
+            text_attr_features = torch.stack(attr_feat_list, dim=0)  # (N_cls, K, dim)
+
         clip_model.train()
         batch_size = 25
         support_size = supp_images.size(0)
@@ -339,32 +396,41 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
                 cat_input = torch.cat(cat_input, dim=1)
                 cat_input = cat_input.view(cat_input.size(0), 5,5,cat_input.size(-1))
                 with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
-                    image_mae_encode = mamba_net(cat_input)
-                    
+                    mamba_output = mamba_net(cat_input)
+                    V_semantic, V_domain = ortho_decomp(mamba_output)
+                    absorber_tokens = tia_head(V_semantic)  # (batch, K, dim)
 
-                ######################################### absorb
-                template = 'a photo of a x.'#dataset.template[0] 
-                temp_texts = [template for i in range(len(image_mae_encode))]
+                ######################################### absorb (multi-head)
+                template = 'a photo of a x.'
+                temp_texts = [template for _ in range(absorber_tokens.size(0))]
                 with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
                     texts = clip.tokenize(temp_texts).cuda()
-                    mae_image_embeddings = clip_model.encode_text(texts, image_mae_encode)
-                mae_text_features = mae_image_embeddings/mae_image_embeddings.norm(dim=-1, keepdim=True)
-                
-    
+                    mae_image_embeddings = clip_model.encode_text(texts, absorber_tokens)
+                mae_text_features = mae_image_embeddings / mae_image_embeddings.norm(dim=-1, keepdim=True)
 
-                mae_cosine_similarity = image_features @ mae_text_features.t()
-                mae_loss = - torch.diag(mae_cosine_similarity).mean()#F.cross_entropy(mae_cosine_similarity, y_batch)
+                # Multi-head L_VtT: align absorber tokens with pre-extracted text attribute features
+                target_attr = text_attr_features[y_batch]  # (batch, K, dim)
+                absorber_norm = F.normalize(absorber_tokens.float(), dim=-1)  # (batch, K, dim)
+                target_norm = F.normalize(target_attr.float(), dim=-1)        # (batch, K, dim)
+                mae_loss = -(absorber_norm * target_norm).sum(dim=-1).mean()
+
+                # Orthogonal loss: soft penalty (architecture already ensures V = V_sem + V_dom)
+                v_sem_norm = F.normalize(V_semantic.float(), dim=-1)
+                v_dom_norm = F.normalize(V_domain.float(), dim=-1)
+                ortho_loss = (v_sem_norm * v_dom_norm).sum(dim=-1).abs().mean()
 
                 ##################### grad cut
+                # ProGrad (Option A): applied to LoRA params only; ortho_decomp/tia_head
+                # receive gradients from L_comb without projection.
                 if(Used_beta > 0):
-                    loss = ce_loss +  Used_beta * mae_loss
+                    loss = ce_loss + Used_beta * mae_loss + args.gamma * ortho_loss
                     clip_model, optimizer, scaler, mean_sim = prograd_backward_and_update(clip_model, optimizer, scaler, loss, ce_loss, 1.0)
                     mean_sim_list.append(mean_sim)
                     Used_beta = get_grad_beta_updatae(args.beta, mean_sim_list, int(args.grad_steps))
                 else:
-                    loss = ce_loss
+                    loss = ce_loss + args.gamma * ortho_loss
                     optimizer.zero_grad()
-                    scaler.scale(ce_loss).backward()
+                    scaler.scale(loss).backward()
                     scaler.step(optimizer)
                 
                     
@@ -396,7 +462,7 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
                     break
 
         ###################################################################
-        fine_acc, acc_conbine, acc_mae, acc_both_mae = fsl_test(clip_model, query_images, query_label, full_texts, mamba_net, supp_images_noAug, supp_label_noAug, emp_full_texts, give_text = text_features)
+        fine_acc, acc_conbine, acc_mae, acc_both_mae = fsl_test(clip_model, query_images, query_label, full_texts, mamba_net, ortho_decomp, tia_head, supp_images_noAug, supp_label_noAug, emp_full_texts, give_text=text_features)
 
         zs_acc_list.append(zs_acc)
         fine_acc_list.append(fine_acc)
@@ -412,7 +478,7 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
             #    print("%d episods: zero shot acc is %g || 200E acc is %g , 400E acc is %g , 600E acc is %g, 800E acc is %g, 1000E acc is %g." % (idx, np.mean(np.array(zs_acc_list)), np.mean(np.array(fine40_acc_list)), np.mean(np.array(fine80_acc_list)), np.mean(np.array(fine120_acc_list)), np.mean(np.array(fine160_acc_list)), np.mean(np.array(fine_acc_list))))
 
     
-def fsl_test(clip_model, query_images, query_label, class_texts, mamba_net, supp_image, supp_label_noAug, emp_full_texts, give_text=None):
+def fsl_test(clip_model, query_images, query_label, class_texts, mamba_net, ortho_decomp, tia_head, supp_image, supp_label_noAug, emp_full_texts, give_text=None):
     clip_model.eval()
     with torch.no_grad(): 
         texts = class_texts
@@ -455,16 +521,17 @@ def fsl_test(clip_model, query_images, query_label, class_texts, mamba_net, supp
         cat_input = torch.cat(cat_input, dim=1)
         cat_input = cat_input.view(cat_input.size(0), 5,5,cat_input.size(-1))
         with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
-            image_mae_encode = mamba_net(cat_input)
-            
-        #################################################################
-        template = 'a photo of a x.'#dataset.template[0] 
-        temp_texts = [template for i in range(len(image_mae_encode))]
+            mamba_output = mamba_net(cat_input)
+            V_semantic, _ = ortho_decomp(mamba_output)
+            absorber_tokens = tia_head(V_semantic)  # (batch, K, dim)
+
+        template = 'a photo of a x.'
+        temp_texts = [template for _ in range(absorber_tokens.size(0))]
         with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
             texts = clip.tokenize(temp_texts).cuda()
-            mae_image_embeddings = clip_model.encode_text(texts, image_mae_encode)
-        if(mae_image_embeddings.size(0) != 5):
-            mae_image_embeddings = mae_image_embeddings.view(5,-1,mae_image_embeddings.size(-1)).mean(1)
+            mae_image_embeddings = clip_model.encode_text(texts, absorber_tokens)
+        if mae_image_embeddings.size(0) != 5:
+            mae_image_embeddings = mae_image_embeddings.view(5, -1, mae_image_embeddings.size(-1)).mean(1)
         mae_supp_text_features = mae_image_embeddings/mae_image_embeddings.norm(dim=-1, keepdim=True)
         
 

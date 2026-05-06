@@ -56,4 +56,4 @@ wandb/
 .ipynb_checkpoints/
 
 # bash
-execute.sh
+*.sh
