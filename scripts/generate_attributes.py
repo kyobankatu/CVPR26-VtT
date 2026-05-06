@@ -141,7 +141,7 @@ def main():
         "text-generation",
         model=args.model,
         device_map="auto",
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
 
     new_attrs = generate_attributes(to_generate, pipe, args.num_attrs)
