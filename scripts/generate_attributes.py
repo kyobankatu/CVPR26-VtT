@@ -55,6 +55,16 @@ LABEL_NAMES = {
 }
 
 
+_PLACEHOLDER_RE = re.compile(
+    r"^(string\d*|str\d*|item\d*|attribute\d*|a|b|c|\.\.\.|<[^>]+>)$",
+    re.IGNORECASE,
+)
+
+def _is_placeholder(attrs: list) -> bool:
+    """Return True if the list looks like template/example strings."""
+    return all(_PLACEHOLDER_RE.match(a) for a in attrs)
+
+
 def parse_json_list(text: str, num_attrs: int, class_name: str) -> list:
     """Extract a JSON list from LLM output; fall back to class_name repeated."""
     # strip any <think>...</think> style blocks
@@ -66,13 +76,14 @@ def parse_json_list(text: str, num_attrs: int, class_name: str) -> list:
     for raw in reversed(candidates):
         try:
             attrs = json.loads(raw)
-            if isinstance(attrs, list) and len(attrs) >= 1:
-                attrs = [str(a).strip() for a in attrs if str(a).strip()]
-                if len(attrs) == 0:
-                    continue
-                while len(attrs) < num_attrs:
-                    attrs.append(class_name)
-                return attrs[:num_attrs]
+            if not (isinstance(attrs, list) and len(attrs) >= 1):
+                continue
+            attrs = [str(a).strip() for a in attrs if str(a).strip()]
+            if len(attrs) == 0 or _is_placeholder(attrs):
+                continue
+            while len(attrs) < num_attrs:
+                attrs.append(class_name)
+            return attrs[:num_attrs]
         except json.JSONDecodeError:
             continue
     print(f"  [warn] JSON parse failed for '{class_name}', using class name as fallback")
@@ -85,13 +96,22 @@ def generate_attributes(class_names, pipe, num_attrs):
         display = cls_name.replace("_", " ")
         messages = [
             {
+                "role": "system",
+                "content": (
+                    "You are a computer vision expert. "
+                    "When asked about a class, describe its visual appearance as seen in photographs or medical images. "
+                    "Reply with ONLY a JSON array of strings, nothing else."
+                ),
+            },
+            {
                 "role": "user",
                 "content": (
-                    f"List {num_attrs} distinct, domain-independent visual semantic attributes "
-                    f"for the class '{display}'. "
-                    "Return ONLY a JSON list of strings."
+                    f"List {num_attrs} distinct visual semantic attributes that describe "
+                    f"the appearance of '{display}' in an image. "
+                    f"Each attribute should be a short descriptive phrase (e.g. 'dark irregular spots', 'smooth glossy surface'). "
+                    "Return ONLY a JSON array of strings."
                 ),
-            }
+            },
         ]
         out = pipe(
             messages,
@@ -101,9 +121,6 @@ def generate_attributes(class_names, pipe, num_attrs):
             return_full_text=False,
         )
         raw = out[0]["generated_text"]
-        if len(result) == 0:
-            print(f"  [debug] raw type: {type(raw)}", flush=True)
-            print(f"  [debug] raw repr: {repr(raw)[:800]}", flush=True)
         # return_full_text=False returns a string (new tokens only)
         if isinstance(raw, list):
             # fallback: full conversation list — take last assistant turn
@@ -121,6 +138,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", default="all",
                         choices=["all", "EuroSAT", "ISIC", "CropDisease", "ChestX"])
+    parser.add_argument("--classes", nargs="+", default=None,
+                        help="specific class names to (re-)generate, overrides --dataset")
     parser.add_argument("--num_attrs", type=int, default=5)
     parser.add_argument("--output", default="data/semantic_attributes.json")
     parser.add_argument("--model", default="Qwen/Qwen3.5-9B")
@@ -135,15 +154,20 @@ def main():
     else:
         all_attrs = {}
 
-    datasets = list(LABEL_NAMES.keys()) if args.dataset == "all" else [args.dataset]
-    all_classes = []
-    for ds in datasets:
-        all_classes.extend(LABEL_NAMES[ds])
-    seen = set()
-    unique_classes = [c for c in all_classes if not (c in seen or seen.add(c))]
-    to_generate = [c for c in unique_classes if c not in all_attrs]
-    print(f"Generating attributes for {len(to_generate)} classes "
-          f"(skipping {len(unique_classes) - len(to_generate)} already done)")
+    if args.classes:
+        # explicit class list — always regenerate (ignore existing entries)
+        to_generate = args.classes
+        print(f"Regenerating {len(to_generate)} specified classes: {to_generate}")
+    else:
+        datasets = list(LABEL_NAMES.keys()) if args.dataset == "all" else [args.dataset]
+        all_classes = []
+        for ds in datasets:
+            all_classes.extend(LABEL_NAMES[ds])
+        seen = set()
+        unique_classes = [c for c in all_classes if not (c in seen or seen.add(c))]
+        to_generate = [c for c in unique_classes if c not in all_attrs]
+        print(f"Generating attributes for {len(to_generate)} classes "
+              f"(skipping {len(unique_classes) - len(to_generate)} already done)")
 
     if not to_generate:
         print("Nothing to generate.")
