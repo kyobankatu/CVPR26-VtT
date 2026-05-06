@@ -57,20 +57,24 @@ LABEL_NAMES = {
 
 def parse_json_list(text: str, num_attrs: int, class_name: str) -> list:
     """Extract a JSON list from LLM output; fall back to class_name repeated."""
-    # strip Qwen3 thinking blocks before parsing
-    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-    text = re.sub(r"```(?:json)?", "", text).strip()
-    match = re.search(r"\[.*?\]", text, re.DOTALL)
-    if match:
+    # strip any <think>...</think> style blocks
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    # strip markdown code fences
+    text = re.sub(r"```(?:json)?```?", "", text)
+    # find all [...] blocks and try from last to first to skip thinking examples
+    candidates = re.findall(r"\[[^\[\]]*\]", text, re.DOTALL)
+    for raw in reversed(candidates):
         try:
-            attrs = json.loads(match.group())
+            attrs = json.loads(raw)
             if isinstance(attrs, list) and len(attrs) >= 1:
-                attrs = [str(a).strip() for a in attrs]
+                attrs = [str(a).strip() for a in attrs if str(a).strip()]
+                if len(attrs) == 0:
+                    continue
                 while len(attrs) < num_attrs:
                     attrs.append(class_name)
                 return attrs[:num_attrs]
         except json.JSONDecodeError:
-            pass
+            continue
     print(f"  [warn] JSON parse failed for '{class_name}', using class name as fallback")
     return [class_name] * num_attrs
 
@@ -91,7 +95,7 @@ def generate_attributes(class_names, pipe, num_attrs):
         ]
         out = pipe(
             messages,
-            max_new_tokens=256,
+            max_new_tokens=1024,
             temperature=0.1,
             do_sample=False,
             return_full_text=False,
