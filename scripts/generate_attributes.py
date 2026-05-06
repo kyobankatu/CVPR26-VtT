@@ -13,21 +13,8 @@ import argparse
 import json
 import os
 import re
-import types
-
-# ---------------------------------------------------------------------------
-# Compatibility patch: torch.compiler was added in PyTorch 2.1.
-# transformers >= 4.46 references it at import time via flex_attention.py.
-# Stub it out before importing transformers so the import succeeds.
-# ---------------------------------------------------------------------------
 import torch
-if not hasattr(torch, "compiler"):
-    _compiler_stub = types.SimpleNamespace(
-        disable=lambda *args, **kwargs: (lambda fn: fn)
-    )
-    torch.compiler = _compiler_stub
-
-from transformers import AutoModelForCausalLM, AutoTokenizer  # noqa: E402
+from transformers import pipeline
 
 # ---------------------------------------------------------------------------
 # Class name lists (mirrors VtT.py:run_lora)
@@ -86,30 +73,24 @@ def parse_json_list(text: str, num_attrs: int, class_name: str) -> list:
     return [class_name] * num_attrs
 
 
-def generate_attributes(class_names, model, tokenizer, num_attrs):
+def generate_attributes(class_names, pipe, num_attrs):
     result = {}
     for cls_name in class_names:
         display = cls_name.replace("_", " ")
-        prompt = (
-            f"List {num_attrs} distinct, domain-independent visual semantic attributes "
-            f"for the class '{display}'. "
-            "Return ONLY a JSON list of strings."
-        )
-        messages = [{"role": "user", "content": prompt}]
-        text = tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
-        inputs = tokenizer(text, return_tensors="pt").to(model.device)
-        with torch.no_grad():
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=128,
-                temperature=0.1,
-                do_sample=False,
-            )
-        generated = tokenizer.decode(
-            outputs[0][inputs.input_ids.shape[1]:], skip_special_tokens=True
-        )
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    f"List {num_attrs} distinct, domain-independent visual semantic attributes "
+                    f"for the class '{display}'. "
+                    "Return ONLY a JSON list of strings."
+                ),
+            }
+        ]
+        out = pipe(messages, max_new_tokens=128, temperature=0.1, do_sample=False)
+        generated = out[0]["generated_text"]
+        if isinstance(generated, list):
+            generated = generated[-1].get("content", "")
         attrs = parse_json_list(generated, num_attrs, cls_name)
         print(f"  {cls_name}: {attrs}")
         result[cls_name] = attrs
@@ -149,13 +130,14 @@ def main():
         return
 
     print(f"Loading model {args.model} ...")
-    tokenizer = AutoTokenizer.from_pretrained(args.model)
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model, device_map="auto", dtype=torch.bfloat16
+    pipe = pipeline(
+        "text-generation",
+        model=args.model,
+        device_map="auto",
+        dtype=torch.bfloat16,
     )
-    model.eval()
 
-    new_attrs = generate_attributes(to_generate, model, tokenizer, args.num_attrs)
+    new_attrs = generate_attributes(to_generate, pipe, args.num_attrs)
     all_attrs.update(new_attrs)
 
     with open(args.output, "w") as f:
