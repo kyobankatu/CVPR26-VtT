@@ -95,7 +95,7 @@ def generate_attributes(class_names, pipe, num_attrs):
         ]
         out = pipe(
             messages,
-            max_new_tokens=1024,
+            max_new_tokens=4096,
             temperature=0.1,
             do_sample=False,
             return_full_text=False,
