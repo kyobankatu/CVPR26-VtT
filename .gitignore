@@ -54,3 +54,6 @@ wandb/
 
 # Jupyter
 .ipynb_checkpoints/
+
+# bash
+execute.sh

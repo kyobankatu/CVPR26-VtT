@@ -4,7 +4,7 @@ import argparse
 import numpy as np 
 import torch
 
-from lora import run_lora
+from VtT import run_lora
 
     
 
