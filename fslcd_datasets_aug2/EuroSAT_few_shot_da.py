@@ -15,7 +15,6 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 EuroSAT_path = '/home/zzy/fsl_CD_dataset/cdfsl_data/EuroSAT/source/EuroSAT'
 import sys
 sys.path.append("../")
-from configs import *
 
 identity = lambda x:x
 class SimpleDataset:
