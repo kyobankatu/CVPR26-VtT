@@ -1,0 +1,436 @@
+{
+  "Apple___Apple_scab": [
+    "dark brown to black discoloration",
+    "raised rough surface texture",
+    "irregular circular shapes",
+    "concentric ring patterns",
+    "surface cracking or scarring"
+  ],
+  "Apple___Black_rot": [
+    "Dark brown to black discoloration",
+    "Concentric ring patterns",
+    "Sunken surface areas",
+    "Shriveled or mummified texture",
+    "Yellowish halo surrounding dark spots"
+  ],
+  "Apple___Cedar_apple_rust": [
+    "Bright orange circular spots",
+    "Black pycnidia centers",
+    "Yellow chlorotic halos",
+    "Orange fruit lesions",
+    "Leaf curling distortion"
+  ],
+  "Apple___healthy": [
+    "Vibrant skin coloration",
+    "Smooth surface texture",
+    "Absence of visible blemishes",
+    "High surface glossiness",
+    "Intact stem presence"
+  ],
+  "Blueberry___healthy": [
+    "Deep blue or purple coloration",
+    "Spherical or oval shape",
+    "Matte surface texture",
+    "Small, uniform size",
+    "Intact skin without blemishes"
+  ],
+  "Cherry_(including_sour)___Powdery_mildew": [
+    "White powdery coating",
+    "Irregular pale patches",
+    "Yellowing leaf tissue",
+    "Leaf curling or distortion",
+    "Necrotic leaf margins"
+  ],
+  "Cherry_(including_sour)___healthy": [
+    "Spherical to slightly oval shape",
+    "Smooth, glossy skin surface",
+    "Short, slender stem attachment",
+    "Red, yellow, or dark purple skin coloration",
+    "Intact skin without visible bruises or blemishes"
+  ],
+  "Corn_(maize)___Cercospora_leaf_spot Gray_leaf_spot": [
+    "Gray to brown discoloration on leaves",
+    "Rectangular or elongated lesion shapes",
+    "Dark brown borders surrounding the spots",
+    "Dry and dead tissue appearance",
+    "Linear alignment of spots parallel to leaf veins"
+  ],
+  "Corn_(maize)___Common_rust_": [
+    "Orange-brown coloration",
+    "Small circular spots",
+    "Powdery surface texture",
+    "Scattered distribution",
+    "Raised surface relief"
+  ],
+  "Corn_(maize)___Northern_Leaf_Blight": [
+    "Elongated cigar-shaped lesions",
+    "Grayish-green to tan coloration",
+    "Dark brown margins bordering lesions",
+    "Linear orientation parallel to leaf veins",
+    "Coalescing lesions reducing leaf area"
+  ],
+  "Corn_(maize)___healthy": [
+    "Uniform kernel coloration",
+    "Vibrant green leaf texture",
+    "Intact cob structure",
+    "Plump and rounded kernel morphology",
+    "Absence of visible blemishes or rot"
+  ],
+  "Grape___Black_rot": [
+    "dark sunken circular spots",
+    "black speckled centers",
+    "mummified shriveled berries",
+    "yellow halo surrounding lesions",
+    "hardened dried fruit surface"
+  ],
+  "Grape___Esca_(Black_Measles)": [
+    "Dark necrotic lesions on leaves",
+    "Yellowing of leaf tissue",
+    "Dark streaks on stems",
+    "Premature defoliation",
+    "Blackened fruit clusters"
+  ],
+  "Grape___Leaf_blight_(Isariopsis_Leaf_Spot)": [
+    "circular dark lesions",
+    "concentric ring patterns",
+    "yellow chlorotic halos",
+    "necrotic brown centers",
+    "irregular dark margins"
+  ],
+  "Grape___healthy": [
+    "Uniform coloration",
+    "Taut skin texture",
+    "High surface gloss",
+    "Absence of blemishes",
+    "Plumpness"
+  ],
+  "Orange___Haunglongbing_(Citrus_greening)": [
+    "Asymmetrical leaf coloration",
+    "Mottled foliage with dark green blotches",
+    "Fruit lacking orange pigmentation",
+    "Deformed fruit structure",
+    "Premature defoliation"
+  ],
+  "Peach___Bacterial_spot": [
+    "Dark brown to black pigmentation",
+    "Sunken or depressed lesion texture",
+    "Circular to irregular lesion shape",
+    "Chlorotic halo surrounding lesions",
+    "Scattered distribution across surface"
+  ],
+  "Peach___healthy": [
+    "Fuzzy skin texture",
+    "Orange-yellow hue",
+    "Red blush gradient",
+    "Smooth unblemished surface",
+    "Symmetrical round shape"
+  ],
+  "Pepper,_bell___Bacterial_spot": [
+    "Small dark brown to black lesions",
+    "Yellow chlorotic halos around spots",
+    "Sunken circular blemishes on fruit",
+    "Concentric ring patterns in necrotic areas",
+    "Scattered necrotic spots on leaf tissue"
+  ],
+  "Pepper,_bell___healthy": [
+    "Glossy skin texture",
+    "Lobed bulbous shape",
+    "Vibrant solid color",
+    "Attached green stem",
+    "Unblemished surface"
+  ],
+  "Potato___Early_blight": [
+    "Concentric ring patterns within spots",
+    "Dark brown to black discoloration",
+    "Yellow halos surrounding spots",
+    "Irregularly shaped spots",
+    "Localized surface browning"
+  ],
+  "Potato___Late_blight": [
+    "Dark brown to black necrotic lesions",
+    "Water-soaked tissue texture",
+    "Yellowing chlorosis surrounding lesions",
+    "White sporulation or moldy growth",
+    "Tissue wilting and collapse"
+  ],
+  "Potato___healthy": [
+    "Tan to brown skin coloration",
+    "Rough matte surface texture",
+    "Absence of green discoloration",
+    "Intact unblemished skin",
+    "Oblong shape"
+  ],
+  "Raspberry___healthy": [
+    "Vibrant deep red coloration",
+    "Glossy surface sheen",
+    "Plump volumetric shape",
+    "Intact aggregate structure",
+    "Absence of surface blemishes"
+  ],
+  "Soybean___healthy": [
+    "Uniform vibrant green coloration",
+    "Absence of necrotic lesions or spots",
+    "Turgid and non-wilted foliage",
+    "Smooth and unblemished surface texture",
+    "Upright and sturdy structure"
+  ],
+  "Squash___Powdery_mildew": [
+    "White powdery patches",
+    "Dusty grayish-white coating",
+    "Yellowing leaf tissue",
+    "Circular to irregular spots",
+    "Flour-like texture on leaves"
+  ],
+  "Strawberry___Leaf_scorch": [
+    "Brown discoloration along leaf margins",
+    "Dry and brittle leaf texture",
+    "Irregular brown patches on foliage",
+    "Yellowing of leaf tissue before browning",
+    "Crispy or scorched appearance of leaf edges"
+  ],
+  "Strawberry___healthy": [
+    "Uniform deep red coloration",
+    "Glossy smooth skin texture",
+    "Plump conical geometry",
+    "Fresh green leafy calyx",
+    "Intact unblemished surface"
+  ],
+  "Tomato___Bacterial_spot": [
+    "Dark brown to black spots",
+    "Yellow rings surrounding spots",
+    "Sunken or depressed surface areas",
+    "Circular to irregular shapes",
+    "Rough or scabby texture on skin"
+  ],
+  "Tomato___Early_blight": [
+    "dark brown concentric rings",
+    "yellow chlorotic halos",
+    "necrotic leaf tissue",
+    "target-like appearance",
+    "sunken fruit lesions"
+  ],
+  "Tomato___Late_blight": [
+    "Dark brown to black lesion coloration",
+    "Yellow halo surrounding lesions",
+    "Water-soaked tissue texture",
+    "White powdery surface growth",
+    "Irregular lesion margins"
+  ],
+  "Tomato___Leaf_Mold": [
+    "Yellowing of the upper leaf surface",
+    "Grayish-green spots on the leaf underside",
+    "Fuzzy or powdery texture on lesions",
+    "Leaf curling or wilting",
+    "Irregular brown spots along leaf margins"
+  ],
+  "Tomato___Septoria_leaf_spot": [
+    "small circular tan lesions",
+    "dark brown marginal borders",
+    "tiny black pycnidia centers",
+    "yellow chlorotic halos",
+    "scattered distribution on leaf surface"
+  ],
+  "Tomato___Spider_mites Two-spotted_spider_mite": [
+    "two dark spots on dorsal side",
+    "minute oval-shaped body",
+    "fine silken webbing",
+    "yellow stippling on leaf surface",
+    "clustered aggregation on foliage"
+  ],
+  "Tomato___Target_Spot": [
+    "concentric ring patterns",
+    "dark brown necrotic centers",
+    "yellow chlorotic halos",
+    "circular lesion shapes",
+    "dry brittle leaf tissue"
+  ],
+  "Tomato___Tomato_Yellow_Leaf_Curl_Virus": [
+    "Yellow discoloration of leaf tissue",
+    "Upward curling of leaf margins",
+    "Irregular leaf shape deformation",
+    "Brown necrotic spots",
+    "Reduced leaf size"
+  ],
+  "Tomato___Tomato_mosaic_virus": [
+    "Mosaic pattern of green and yellow",
+    "Leaf curling and distortion",
+    "Yellow discoloration of leaves",
+    "Dark brown necrotic spots",
+    "Stunted plant growth"
+  ],
+  "Tomato___healthy": [
+    "Uniform red coloration",
+    "Glossy skin texture",
+    "Symmetrical shape",
+    "Absence of blemishes",
+    "Intact green calyx"
+  ],
+  "Annual Crop Land": [
+    "Dominant Vegetation Color",
+    "Geometric Field Shape",
+    "Linear Texture Pattern",
+    "Distinct Field Boundaries",
+    "Vegetation Density"
+  ],
+  "Forest": [
+    "Dense vertical vegetation",
+    "Predominant green coloration",
+    "Continuous canopy cover",
+    "Organic irregular boundaries",
+    "High textural complexity"
+  ],
+  "Herbaceous Vegetation Land": [
+    "vibrant green hues",
+    "fine textured surface",
+    "low vertical structure",
+    "uniform ground cover",
+    "irregular patch boundaries"
+  ],
+  "Highway or Road": [
+    "Paved surface material",
+    "Linear geometric structure",
+    "Lane markings",
+    "Defined road boundaries",
+    "Traffic signage"
+  ],
+  "Industrial Buildings": [
+    "Large scale footprint",
+    "Multiple large vehicle access doors",
+    "Exposed structural elements",
+    "Visible external mechanical systems",
+    "Minimal decorative ornamentation"
+  ],
+  "Pasture Land": [
+    "Grassy surface",
+    "Open terrain",
+    "Fencing structures",
+    "Short vegetation",
+    "Rolling or flat ground"
+  ],
+  "Permanent Crop Land": [
+    "Woody vegetation structure",
+    "Regular spatial arrangement",
+    "Moderate vegetation density",
+    "Persistent foliage",
+    "Visible inter-row spacing"
+  ],
+  "Residential Buildings": [
+    "number_of_stories",
+    "window_configuration",
+    "roof_structure",
+    "entrance_configuration",
+    "balcony_or_terrace"
+  ],
+  "River": [
+    "Meandering linear geometry",
+    "Fluid surface texture",
+    "Reflective water surface",
+    "Defined bank boundaries",
+    "Variable width profile"
+  ],
+  "Sea or Lake": [
+    "Fluid surface continuity",
+    "Water-land boundary presence",
+    "Sky reflection characteristics",
+    "Surface wave or ripple texture",
+    "Aquatic coloration"
+  ],
+  "Melanoma": [
+    "Asymmetry",
+    "Border Irregularity",
+    "Color Heterogeneity",
+    "Ulceration",
+    "Elevation"
+  ],
+  "Melanocytic Nevus": [
+    "Color Homogeneity",
+    "Border Regularity",
+    "Shape Symmetry",
+    "Surface Topography",
+    "Object Size"
+  ],
+  "Basal Cell Carcinoma": [
+    "Shiny, translucent surface",
+    "Elevated, rolled borders",
+    "Fine, visible blood vessels",
+    "Central erosion or crusting",
+    "Heterogeneous coloration"
+  ],
+  "Actinic Keratosis": [
+    "Rough sandpaper-like texture",
+    "Pink or red scaly patches",
+    "Slightly raised or flat surface",
+    "Irregular lesion borders",
+    "Dry flaky skin appearance"
+  ],
+  "Benign Keratosis": [
+    "Variegated brown to tan pigmentation",
+    "Waxy or greasy surface texture",
+    "Well-defined distinct borders",
+    "Rough or cracked surface appearance",
+    "Raised or elevated surface profile"
+  ],
+  "Dermatofibroma": [
+    "Brownish to pinkish color",
+    "Round or oval shape",
+    "Clear boundaries",
+    "Central lighter area",
+    "Slightly raised surface"
+  ],
+  "Vascular Lesion": [
+    "Irregular vessel contour",
+    "Abnormal vessel dilation",
+    "Heterogeneous internal texture",
+    "Abnormal intensity or echogenicity",
+    "Calcified components"
+  ],
+  "Atelectasis": [
+    "Increased opacity",
+    "Linear or wedge-shaped density",
+    "Mediastinal shift",
+    "Elevated diaphragm",
+    "Reduced lung volume"
+  ],
+  "Cardiomegaly": [
+    "Enlarged cardiac silhouette",
+    "Increased cardiothoracic ratio",
+    "Bulging left heart border",
+    "Widened mediastinal contour",
+    "Increased central opacity"
+  ],
+  "Effusion": [
+    "Homogeneous internal texture",
+    "Curved upper boundary",
+    "Dependent layering",
+    "Increased opacity relative to background",
+    "Well-defined margins"
+  ],
+  "Infiltration": [
+    "Ill-defined tissue margins",
+    "Disrupted normal architecture",
+    "Increased tissue density",
+    "Heterogeneous texture patterns",
+    "Loss of tissue planes"
+  ],
+  "Mass": [
+    "lobulated shape",
+    "irregular margins",
+    "heterogeneous internal texture",
+    "distinct density contrast",
+    "displacement of surrounding tissue"
+  ],
+  "Nodule": [
+    "Spherical or ovoid geometry",
+    "Circumscribed or ill-defined margins",
+    "Uniform or heterogeneous internal texture",
+    "Distinct brightness or color contrast",
+    "Compact localized region"
+  ],
+  "Pneumothorax": [
+    "Absence of fine linear structures within a dark region",
+    "Sharp linear boundary separating tissue from air",
+    "Increased darkness relative to the opposite lung",
+    "Displacement of central anatomical structures",
+    "Deepened corner of the diaphragm"
+  ]
+}
