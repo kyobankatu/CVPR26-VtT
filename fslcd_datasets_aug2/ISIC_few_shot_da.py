@@ -14,7 +14,7 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 import sys
 sys.path.append("../")
-ISIC_path = "/home/zzy/fsl_CD_dataset/cdfsl_data/ISIC/source"
+ISIC_path = "/home/katumon/datasets/ISIC2018/source"
 class CustomDatasetFromImages(Dataset):
     def __init__(self, csv_path= ISIC_path + "/ISIC2018_Task3_Training_GroundTruth/ISIC2018_Task3_Training_GroundTruth.csv", \
         image_path =  ISIC_path + "/ISIC2018_Task3_Training_Input/"):

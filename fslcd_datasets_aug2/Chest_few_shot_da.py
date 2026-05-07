@@ -14,7 +14,7 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 import sys
 sys.path.append("../")
-ChestX_path = '/home/zzy/fsl_CD_dataset/cdfsl_data/ChestX'
+ChestX_path = '/home/katumon/datasets/ChestX'
 class CustomDatasetFromImages(Dataset):
     def __init__(self, csv_path=ChestX_path+"/Data_Entry_2017.csv", \
         image_path = ChestX_path+"/base/"):

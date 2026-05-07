@@ -12,7 +12,7 @@ from torchvision.datasets import ImageFolder
 
 from PIL import ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
-EuroSAT_path = '/home/zzy/fsl_CD_dataset/cdfsl_data/EuroSAT/source/EuroSAT'
+EuroSAT_path = '/home/katumon/datasets/EuroSAT/source/EuroSAT'
 import sys
 sys.path.append("../")
 

@@ -15,7 +15,7 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 import sys
 sys.path.append("../")
-CropDisease_path = '/home/zzy/fsl_CD_dataset/cdfsl_data/CropDisease/source/dataset/train'
+CropDisease_path = '/home/katumon/datasets/CropDisease/source/dataset/train'
 identity = lambda x:x
 class SimpleDataset:
     def __init__(self, transform, target_transform=identity):
