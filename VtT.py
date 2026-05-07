@@ -401,7 +401,7 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
                     absorber_tokens = tia_head(V_semantic)  # (batch, K, dim)
 
                 ######################################### absorb (multi-head)
-                template = 'a photo of a x.'
+                template = 'a photo of a ' + ' '.join(['x'] * args.num_attrs) + '.'
                 temp_texts = [template for _ in range(absorber_tokens.size(0))]
                 with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
                     texts = clip.tokenize(temp_texts).cuda()
@@ -525,7 +525,8 @@ def fsl_test(clip_model, query_images, query_label, class_texts, mamba_net, orth
             V_semantic, _ = ortho_decomp(mamba_output)
             absorber_tokens = tia_head(V_semantic)  # (batch, K, dim)
 
-        template = 'a photo of a x.'
+        num_attrs = absorber_tokens.size(1)
+        template = 'a photo of a ' + ' '.join(['x'] * num_attrs) + '.'
         temp_texts = [template for _ in range(absorber_tokens.size(0))]
         with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
             texts = clip.tokenize(temp_texts).cuda()

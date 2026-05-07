@@ -48,6 +48,7 @@ checkpoints/
 *.pkl
 *.h5
 *.hdf5
+CVPR26-VtT-main/
 
 # Logs
 logs/
