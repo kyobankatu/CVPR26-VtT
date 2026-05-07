@@ -5,8 +5,6 @@ import os
 import torch
 import torchvision.transforms as transforms
 import clip
-from datasets import build_dataset
-from datasets.utils import build_data_loader
 from fslcd_datasets_aug2 import ISIC_few_shot_da,  CropDisease_few_shot_da, Chest_few_shot_da, EuroSAT_few_shot_da#, CropDisease_few_shot_da, Chest_few_shot_da, Pattern_few_shot_da
 from utils import *
 from run_utils import *
