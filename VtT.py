@@ -408,11 +408,17 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
                     mae_image_embeddings = clip_model.encode_text(texts, absorber_tokens)
                 mae_text_features = mae_image_embeddings / mae_image_embeddings.norm(dim=-1, keepdim=True)
 
-                # Multi-head L_VtT: align absorber tokens with pre-extracted text attribute features
+                # Main loss: image ↔ MAE text (restored from original VtT)
+                mae_cosine = image_features @ mae_text_features.t()
+                mae_loss_img = -torch.diag(mae_cosine).mean()
+
+                # Auxiliary loss: absorber tokens ↔ pre-extracted attribute text features
                 target_attr = text_attr_features[y_batch]  # (batch, K, dim)
-                absorber_norm = F.normalize(absorber_tokens.float(), dim=-1)  # (batch, K, dim)
-                target_norm = F.normalize(target_attr.float(), dim=-1)        # (batch, K, dim)
-                mae_loss = -(absorber_norm * target_norm).sum(dim=-1).mean()
+                absorber_norm = F.normalize(absorber_tokens.float(), dim=-1)
+                target_norm = F.normalize(target_attr.float(), dim=-1)
+                mae_loss_attr = -(absorber_norm * target_norm).sum(dim=-1).mean()
+
+                mae_loss = mae_loss_img + args.lambda_attr * mae_loss_attr
 
                 # Orthogonal loss: soft penalty (architecture already ensures V = V_sem + V_dom)
                 v_sem_norm = F.normalize(V_semantic.float(), dim=-1)
