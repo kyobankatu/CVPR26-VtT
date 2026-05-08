@@ -408,9 +408,10 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
                     mae_image_embeddings = clip_model.encode_text(texts, absorber_tokens)
                 mae_text_features = mae_image_embeddings / mae_image_embeddings.norm(dim=-1, keepdim=True)
 
-                # Main loss: image ↔ MAE text (restored from original VtT)
-                mae_cosine = image_features @ mae_text_features.t()
-                mae_loss_img = -torch.diag(mae_cosine).mean()
+                # Main loss: InfoNCE — image ↔ MAE text (each sample is its own positive)
+                mae_cosine = image_features @ mae_text_features.t()  # (batch, batch)
+                targets = torch.arange(len(image_features), device=image_features.device)
+                mae_loss_img = F.cross_entropy(mae_cosine, targets)
 
                 # Auxiliary loss: absorber tokens ↔ pre-extracted attribute text features
                 target_attr = text_attr_features[y_batch]  # (batch, K, dim)

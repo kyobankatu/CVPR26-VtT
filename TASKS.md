@@ -109,5 +109,52 @@ Integrate all changes into `VtT.py:run_lora()` and clarify how ProGrad handles n
   - [ ] Document the chosen option in a comment near the ProGrad call.
 
 ## Phase 8: Debugging and Hyperparameter Tuning
-- [ ] Add `--gamma` argument to `run_utils.py:get_arguments()` (weight of $L_{ortho}$, default `0.1`).
-- [ ] Add `--num_attrs` argument to control $K$ (default `5`).
+- [x] Add `--gamma` argument to `run_utils.py:get_arguments()` (weight of $L_{ortho}$, default `0.1`).
+- [x] Add `--num_attrs` argument to control $K$ (default `5`).
+
+---
+
+## Phase 9: mae_loss_img の InfoNCE 化（案A）
+
+### 目的
+fine_acc をさらに向上させる。
+現状の `-diag(image_features @ mae_text_features.T).mean()` は正例を引き寄せるだけで
+負例を考慮しない。InfoNCE（cross-entropy）化により、クラス間識別シグナルを強化し
+LoRA への学習勾配をより鮮明にする。
+
+### 現状と期待値
+| 指標       | 元論文  | 79340 (現状) | 期待値  |
+|------------|---------|--------------|---------|
+| fine_acc ★ | 85.14%  | 85.54%       | >85.5%  |
+
+### 変更箇所
+`VtT.py` — `mae_loss_img` の計算式のみ変更（2行）
+
+### 変更内容
+
+**変更前:**
+```python
+mae_cosine = image_features @ mae_text_features.t()
+mae_loss_img = -torch.diag(mae_cosine).mean()
+```
+
+**変更後:**
+```python
+mae_cosine = image_features @ mae_text_features.t()  # (batch, batch)
+targets = torch.arange(len(image_features), device=image_features.device)
+mae_loss_img = F.cross_entropy(mae_cosine, targets)
+```
+
+### 根拠
+- `cross_entropy(logits, arange)` は InfoNCE と等価
+- 各行 i について「列 i のスコアが最大になれ」を要求
+  → 正例を引き寄せ、かつバッチ内の他サンプルを負例として押しのける
+- 元の `-diag(...).mean()` は正例引き寄せのみ（負例への勾配ゼロ）
+- `mae_text_features[i]` は画像 i の absorber token から生成されるため
+  バッチ内で同クラスが複数あっても各特徴は画像固有 → `arange` ラベルで正しい
+
+### ステータス
+- [x] 計画記述
+- [x] 実装（`VtT.py:415`）
+- [ ] 実験実行
+- [ ] 結果確認
