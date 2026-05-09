@@ -509,7 +509,7 @@ def fsl_test(clip_model, query_images, query_label, class_texts, mamba_net, orth
         images, target = query_images.cuda(), query_label.cuda()
         with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
             image_features, image_features_raw_all = clip_model.encode_image(images, ret_all=True)
-            supp_image_features, supp_image_features_raw_all = clip_model.encode_image(supp_image, ret_all=True)
+            supp_image_features_raw, supp_image_features_raw_all = clip_model.encode_image(supp_image, ret_all=True)
         image_features = image_features/image_features.norm(dim=-1, keepdim=True)
         cosine_similarity = image_features @ text_features.t()
         acc = cls_acc(cosine_similarity, target) * len(cosine_similarity)
