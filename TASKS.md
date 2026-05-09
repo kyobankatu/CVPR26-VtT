@@ -155,6 +155,80 @@ mae_loss_img = F.cross_entropy(mae_cosine, targets)
 
 ### ステータス
 - [x] 計画記述
-- [x] 実装（`VtT.py:415`）
+- [x] 実装（`VtT.py:411-414`）
+- [x] 実験実行（VtT.79382）
+- [x] 結果確認 → **失敗（fine_acc 85.54% → 80.90%, −4.64pt）**
+
+### 失敗原因
+バッチ内に同クラスの画像が複数存在する（batch_size=25, 5-way → 各クラス約5枚）ため、
+InfoNCE化により同クラス同士を負例として押しのけてしまい、LoRA に有害な勾配が流れた。
+combine_acc は 36.55% → 78.30% と劇的改善したが、fine_acc が犠牲になった。
+
+### 対応
+- [ ] `mae_loss_img` を元の `-diag(...).mean()` に戻す（次タスク）
+
+---
+
+## Phase 10: 案A の取り消し（roll back）
+
+### 目的
+Phase 9 で導入した InfoNCE が fine_acc を悪化させたため、元の式に戻す。
+
+### 変更箇所
+`VtT.py:411-414`
+
+### 変更内容
+```python
+mae_cosine = image_features @ mae_text_features.t()
+mae_loss_img = -torch.diag(mae_cosine).mean()
+```
+
+### ステータス
+- [x] 実装
+- [ ] 実験実行（不要 — 79340 で確認済み）
+
+---
+
+## Phase 11: Supervised Contrastive Loss（案A'）
+
+### 目的
+案A（InfoNCE）の失敗から、「同クラス同士を押しのけない」損失設計が必要と判明。
+Supervised Contrastive Loss を導入することで、同クラスは正例として扱い、
+他クラスのみ負例として押しのける。InfoNCE の識別力を保ちつつ、
+fine_acc を悪化させた同クラス押しのけ問題を回避する。
+
+### 現状（K=5維持）と期待値
+| 指標       | 元論文 | 79340 (-diag) | 79382 (InfoNCE) | 期待値 |
+|------------|--------|---------------|-----------------|--------|
+| fine_acc ★ | 85.14% | 85.54%        | 80.90%          | >85.5% |
+| combine_acc| 80.99% | 36.55%        | 78.30%          | >50%   |
+
+### 変更箇所
+`VtT.py:411-417` — `mae_loss_img` の計算式
+
+### 変更内容
+```python
+# Supervised Contrastive: same-class pairs are positives
+sc_logits = logit_scale * image_features @ mae_text_features.t()  # (B, B)
+labels_eq = (y_batch.unsqueeze(0) == y_batch.unsqueeze(1)).float()  # (B, B)
+log_prob = F.log_softmax(sc_logits, dim=1)
+mean_log_prob_pos = (labels_eq * log_prob).sum(dim=1) / labels_eq.sum(dim=1).clamp(min=1.0)
+mae_loss_img = -mean_log_prob_pos.mean()
+```
+
+### 設計判断
+- **`logit_scale` を乗算**: 生 cosine（[-1,1]）だと softmax が平坦化して勾配が弱い。
+  CE loss と同じスケール（`cosine_similarity = logit_scale * ...` 行と一致）に揃える。
+- **自己ペアも正例に含める**: `y_i == y_i` は常に True なので `labels_eq` の対角は1。
+  これにより最低でも instance-level alignment は保たれる。
+- **正例で平均**: `labels_eq.sum(dim=1)` で割ることで、クラス頻度が偏っても安定。
+
+### 根拠
+- batch_size=25, 5-way → 各クラス約5枚。InfoNCE では同クラス4枚を負例にしてしまう。
+- Supervised Contrastive はこの 4枚を正例として扱う → 同クラス凝集 + 他クラス分離
+
+### ステータス
+- [x] 計画記述
+- [x] 実装（`VtT.py:411-417`）
 - [ ] 実験実行
 - [ ] 結果確認

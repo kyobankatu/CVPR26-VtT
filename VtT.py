@@ -408,10 +408,13 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
                     mae_image_embeddings = clip_model.encode_text(texts, absorber_tokens)
                 mae_text_features = mae_image_embeddings / mae_image_embeddings.norm(dim=-1, keepdim=True)
 
-                # Main loss: InfoNCE — image ↔ MAE text (each sample is its own positive)
-                mae_cosine = image_features @ mae_text_features.t()  # (batch, batch)
-                targets = torch.arange(len(image_features), device=image_features.device)
-                mae_loss_img = F.cross_entropy(mae_cosine, targets)
+                # Main loss: Supervised Contrastive — same-class pairs are positives,
+                # other-class pairs are negatives (avoids pushing same-class apart)
+                sc_logits = logit_scale * image_features @ mae_text_features.t()  # (B, B)
+                labels_eq = (y_batch.unsqueeze(0) == y_batch.unsqueeze(1)).float()  # (B, B)
+                log_prob = F.log_softmax(sc_logits, dim=1)
+                mean_log_prob_pos = (labels_eq * log_prob).sum(dim=1) / labels_eq.sum(dim=1).clamp(min=1.0)
+                mae_loss_img = -mean_log_prob_pos.mean()
 
                 # Auxiliary loss: absorber tokens ↔ pre-extracted attribute text features
                 target_attr = text_attr_features[y_batch]  # (batch, K, dim)
