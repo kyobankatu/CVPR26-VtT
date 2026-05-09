@@ -77,6 +77,13 @@ class MultiHeadTIA(nn.Module):
         return self.proj(v_semantic).view(batch, self.num_attrs, self.dim)
 
 
+def build_attribute_prompt(attrs):
+    clean_attrs = [attr.strip().replace("_", " ") for attr in attrs if attr.strip()]
+    if not clean_attrs:
+        return "a photo of a thing."
+    return f"a photo of a {', '.join(clean_attrs)}."
+
+
 def prograd_backward_and_update(model, optim, scaler, loss_a, loss_b, lambda_=1, names=None):
     # loss_b not increase is okay
     # loss_a has to decline
@@ -325,17 +332,18 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
                 emp_class_embeddings, emp_class_embeddings_all = clip_model.encode_text(emp_texts, ret_all = True)
             text_features = class_embeddings/class_embeddings.norm(dim=-1, keepdim=True)
 
-            # Pre-compute text attribute features: (N_classes, K, dim)
-            attr_feat_list = []
+            # Pre-compute attribute-aware text targets in the final CLIP text space.
+            attr_text_feature_list = []
             for cls_name in class_texts:
                 attrs = semantic_attrs.get(cls_name, [cls_name] * args.num_attrs)
                 attrs = attrs[:args.num_attrs]
+                attr_prompt = build_attribute_prompt(attrs)
                 with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
-                    attr_tokens = clip.tokenize(attrs).cuda()
-                    attr_feats = clip_model.encode_text(attr_tokens)  # (K, dim)
-                attr_feats = attr_feats / attr_feats.norm(dim=-1, keepdim=True)
-                attr_feat_list.append(attr_feats)
-            text_attr_features = torch.stack(attr_feat_list, dim=0)  # (N_cls, K, dim)
+                    attr_tokens = clip.tokenize([attr_prompt]).cuda()
+                    attr_text_feature = clip_model.encode_text(attr_tokens).squeeze(0)
+                attr_text_feature = attr_text_feature / attr_text_feature.norm(dim=-1, keepdim=True)
+                attr_text_feature_list.append(attr_text_feature)
+            text_attr_features = torch.stack(attr_text_feature_list, dim=0)  # (N_cls, dim)
 
         clip_model.train()
         batch_size = 25
@@ -408,19 +416,14 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
                     mae_image_embeddings = clip_model.encode_text(texts, absorber_tokens)
                 mae_text_features = mae_image_embeddings / mae_image_embeddings.norm(dim=-1, keepdim=True)
 
-                # Main loss: Supervised Contrastive — same-class pairs are positives,
-                # other-class pairs are negatives (avoids pushing same-class apart)
-                sc_logits = logit_scale * image_features @ mae_text_features.t()  # (B, B)
-                labels_eq = (y_batch.unsqueeze(0) == y_batch.unsqueeze(1)).float()  # (B, B)
-                log_prob = F.log_softmax(sc_logits, dim=1)
-                mean_log_prob_pos = (labels_eq * log_prob).sum(dim=1) / labels_eq.sum(dim=1).clamp(min=1.0)
-                mae_loss_img = -mean_log_prob_pos.mean()
+                # Main loss: image ↔ MAE text (restored from original VtT)
+                mae_cosine = image_features @ mae_text_features.t()
+                mae_loss_img = -torch.diag(mae_cosine).mean()
 
-                # Auxiliary loss: absorber tokens ↔ pre-extracted attribute text features
-                target_attr = text_attr_features[y_batch]  # (batch, K, dim)
-                absorber_norm = F.normalize(absorber_tokens.float(), dim=-1)
-                target_norm = F.normalize(target_attr.float(), dim=-1)
-                mae_loss_attr = -(absorber_norm * target_norm).sum(dim=-1).mean()
+                # Auxiliary loss: align restored text embeddings with attribute-aware
+                # class descriptions in the final CLIP text embedding space.
+                target_attr = text_attr_features[y_batch]  # (batch, dim)
+                mae_loss_attr = -(mae_text_features.float() * target_attr.float()).sum(dim=-1).mean()
 
                 mae_loss = mae_loss_img + args.lambda_attr * mae_loss_attr
 
@@ -515,7 +518,8 @@ def fsl_test(clip_model, query_images, query_label, class_texts, mamba_net, orth
 
 
         class_embeddings_all = class_embeddings_all[supp_label_noAug]
-        cat_input = [torch.unsqueeze(supp_image_features, dim=1)]
+        # Match training-time Mamba input construction: use raw support features.
+        cat_input = [torch.unsqueeze(supp_image_features_raw, dim=1)]
         #cat_input = []
         for i in range(supp_image_features_raw_all.size(1), -1, -1):
             i-=1
