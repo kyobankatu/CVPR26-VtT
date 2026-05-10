@@ -195,3 +195,154 @@ Use this template for each run:
 - combined branch:
 - Main observation:
 - Keep / revert:
+
+---
+
+## Original VtT Improvement Track
+Target: improve the original model in `CVPR-VtT-main` without relying on semantic attributes.
+
+### Phase O1: Prompt Redesign for EuroSAT
+Goal: replace the generic natural-image prompt with a satellite-imagery-aware prompt and measure whether the text side becomes more compatible with EuroSAT.
+
+- [ ] Locate every place where the original model builds class prompts.
+- [ ] Replace the default prompt
+  - from: `a photo of a {}.`
+  - to: `a satellite image of {}.`
+- [ ] Keep the prompt string configurable from the command line instead of hard-coding a single template.
+- [ ] Add a new argument such as `--prompt_template`.
+- [ ] Use the new argument in both:
+  - support-time text feature construction
+  - evaluation-time text feature construction
+- [ ] Run an ablation on EuroSAT 1-shot with:
+  - baseline prompt: `a photo of a {}.`
+  - satellite prompt: `a satellite image of {}.`
+- [ ] If the satellite prompt helps, test one stronger variant:
+  - `a satellite image of {} land cover.`
+
+Files:
+
+- `main.py`
+- `VtT.py`
+- `run_utils.py`
+
+Success criterion:
+
+- `fine_acc` improves over the original EuroSAT baseline without introducing instability in the auxiliary branches.
+
+### Phase O2: Token-Space Adversarial Alignment
+Goal: make `image_mae_encode` look like a valid text token before it enters the CLIP text encoder, while keeping the existing image-text similarity loss.
+
+- [ ] Keep the current prompt-template support from Phase O1.
+- [ ] Do not change the final fusion rule yet.
+  - Keep the current fixed `0.5 / 0.5` combination as a control.
+- [ ] Add a small discriminator that distinguishes:
+  - real text-token-like vectors
+  - fake vectors produced by `Mamba_Net`
+- [ ] Use token-space adversarial training, not final text-embedding adversarial training.
+  - Reason: final-embedding adversarial loss is more likely to compete directly with `mae_loss`.
+- [ ] Define the fake samples as:
+  - `image_mae_encode`
+- [ ] Define the real samples as one of:
+  - averaged class-name token embeddings
+  - class-token-region average from the prompt input embedding sequence
+- [ ] Start with the simpler real-target definition:
+  - averaged class-name token embeddings
+- [ ] Add a lightweight discriminator, for example:
+  - `Linear(512, 256) -> ReLU -> Linear(256, 1)`
+- [ ] Train the discriminator to classify:
+  - real token-space samples as `1`
+  - fake token-space samples as `0`
+- [ ] Train `Mamba_Net` adversarially so its outputs are classified as real.
+- [ ] Keep the existing `mae_loss` unchanged.
+  - The adversarial loss should be an additional regularizer.
+- [ ] Start with a small adversarial weight:
+  - `0.01`
+  - `0.05`
+  - `0.1`
+- [ ] Log separately:
+  - `ce_loss`
+  - `mae_loss`
+  - discriminator loss
+  - generator adversarial loss
+- [ ] Evaluate primarily on:
+  - `fine_acc` (leftmost value in `full acc is ...`)
+
+Files:
+
+- `VtT.py`
+- `run_utils.py`
+- possibly `clip/model.py` if token-level extraction helpers are needed
+
+Success criterion:
+
+- `fine_acc` improves over the original EuroSAT baseline without relying on semantic attributes.
+
+### Phase O2A: Build Real Token Targets
+Goal: create stable "real text token" targets for adversarial training.
+
+- [ ] Inspect CLIP tokenization for class prompts.
+- [ ] Extract the token-embedding sequence before the text transformer.
+- [ ] Identify the class-name token span inside the prompt.
+- [ ] Compute a pooled real token target from that span.
+- [ ] Verify the pooled target has the same dimensionality as `image_mae_encode`.
+- [ ] Sanity-check with a few EuroSAT class names that tokenize into multiple pieces.
+
+Files:
+
+- `clip/model.py`
+- `VtT.py`
+
+Success criterion:
+
+- Real token targets are consistent across classes and compatible with the fake token shape.
+
+### Phase O2B: Add the Token Discriminator
+Goal: train a discriminator to separate genuine text-token vectors from Mamba-generated vectors.
+
+- [ ] Implement a small discriminator module in `VtT.py`.
+- [ ] Add a separate optimizer for discriminator parameters.
+- [ ] Keep discriminator training detached from the main generator path where appropriate.
+- [ ] Train the discriminator on:
+  - real pooled class-token targets
+  - fake `image_mae_encode`
+- [ ] Track discriminator accuracy to avoid collapse.
+
+Files:
+
+- `VtT.py`
+
+Success criterion:
+
+- Discriminator learns a meaningful boundary without immediately saturating at 100%.
+
+### Phase O2C: Adversarially Train `Mamba_Net`
+Goal: force `Mamba_Net` to produce token-space vectors that the discriminator cannot reliably distinguish from real text tokens.
+
+- [ ] Choose one training scheme:
+  - Gradient Reversal Layer
+  - alternating optimization
+- [ ] Start with alternating optimization if implementation clarity is better.
+- [ ] Add generator-side adversarial loss on `image_mae_encode`.
+- [ ] Combine losses as:
+  - existing `ce_loss`
+  - existing `beta * mae_loss`
+  - small `lambda_adv * adv_loss`
+- [ ] Sweep only a few `lambda_adv` values first.
+- [ ] Check that `fine_acc` is the main model-selection metric.
+
+Files:
+
+- `VtT.py`
+
+Success criterion:
+
+- `image_mae_encode` becomes more text-like in token space and `fine_acc` improves.
+
+### Recommended Execution Order for the Original Model
+Implement and test in this order:
+
+1. Phase O1 with only the prompt change
+2. Phase O2A to build real token targets
+3. Phase O2B to verify discriminator behavior
+4. Phase O2C to enable adversarial training
+5. Keep the best prompt + adversarial setting as the new original-model baseline
