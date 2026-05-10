@@ -48,12 +48,45 @@ class Mamba_Net(nn.Module):
 _tokenizer = _Tokenizer()
 
 
+class TokenDiscriminator(nn.Module):
+    def __init__(self, dim=512, hidden_dim=256):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(dim, hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_dim, 1),
+        )
+
+    def forward(self, x):
+        return self.net(x).squeeze(-1)
+
+
+def set_requires_grad(module, requires_grad):
+    for param in module.parameters():
+        param.requires_grad_(requires_grad)
+
+
 def format_prompt(template, text):
     return template.format(text.replace('_', ' '))
 
 
 def placeholder_prompt(template, placeholder="x"):
     return format_prompt(template, placeholder)
+
+
+def build_real_token_targets(clip_model, class_texts):
+    tokenized = clip.tokenize([text.replace('_', ' ') for text in class_texts]).cuda()
+    token_embeddings = clip_model.token_embedding(tokenized).type(clip_model.dtype)
+    targets = []
+    for idx in range(tokenized.size(0)):
+        eot_idx = int(tokenized[idx].argmax().item())
+        if eot_idx <= 1:
+            pooled = token_embeddings[idx, 1]
+        else:
+            pooled = token_embeddings[idx, 1:eot_idx].mean(dim=0)
+        targets.append(pooled)
+    targets = torch.stack(targets, dim=0)
+    return targets / targets.norm(dim=-1, keepdim=True)
 
 
 def prograd_backward_and_update(model, optim, scaler, loss_a, loss_b, lambda_=1, names=None):
@@ -232,6 +265,7 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
 
         clip_model = copy.deepcopy(clip_model_zs)
         mamba_net = Mamba_Net().cuda()
+        token_discriminator = TokenDiscriminator(dim=512, hidden_dim=256).cuda()
         mamba_params = []
         for name, param in mamba_net.named_parameters():
             mamba_params.append(param)
@@ -267,15 +301,19 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
                 emp_texts = clip.tokenize(emp_full_texts).cuda()
                 emp_class_embeddings, emp_class_embeddings_all = clip_model.encode_text(emp_texts, ret_all = True)
             text_features = class_embeddings/class_embeddings.norm(dim=-1, keepdim=True)
+            real_token_targets = build_real_token_targets(clip_model, class_texts)
 
         clip_model.train()
+        token_discriminator.train()
         batch_size = 25
         support_size = supp_images.size(0)
 
         parameters_to_update = [{'params': mamba_params,'lr':args.mamba_lr}, {'params': lora_parameters}]
         optimizer = torch.optim.AdamW(parameters_to_update, weight_decay=1e-2, betas=(0.9, 0.999), lr=args.lr)
+        disc_optimizer = torch.optim.AdamW(token_discriminator.parameters(), lr=args.disc_lr, weight_decay=1e-4)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, total_iters * 8, eta_min=1e-6)
         scaler = torch.cuda.amp.GradScaler()
+        disc_loss_fn = nn.BCEWithLogitsLoss()
 
         count_iters = 0
         while count_iters < total_iters:
@@ -325,14 +363,34 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
                 mae_cosine_similarity = image_features @ mae_text_features.t()
                 mae_loss = -torch.diag(mae_cosine_similarity).mean()
 
+                adv_loss = torch.zeros((), device=image_mae_encode.device, dtype=torch.float32)
+                if args.lambda_adv > 0:
+                    real_tokens = real_token_targets[y_batch].float().detach()
+                    fake_tokens_detached = image_mae_encode.float().detach()
+
+                    disc_optimizer.zero_grad()
+                    real_logits = token_discriminator(real_tokens)
+                    fake_logits = token_discriminator(fake_tokens_detached)
+                    disc_loss_real = disc_loss_fn(real_logits, torch.ones_like(real_logits))
+                    disc_loss_fake = disc_loss_fn(fake_logits, torch.zeros_like(fake_logits))
+                    disc_loss = 0.5 * (disc_loss_real + disc_loss_fake)
+                    disc_loss.backward()
+                    disc_optimizer.step()
+
+                    set_requires_grad(token_discriminator, False)
+                    adv_logits = token_discriminator(image_mae_encode.float())
+                    adv_loss = disc_loss_fn(adv_logits, torch.ones_like(adv_logits))
+                    set_requires_grad(token_discriminator, True)
+
                 if(Used_beta > 0):
-                    loss = ce_loss + Used_beta * mae_loss
+                    loss = ce_loss + Used_beta * mae_loss + args.lambda_adv * adv_loss
                     clip_model, optimizer, scaler, mean_sim = prograd_backward_and_update(clip_model, optimizer, scaler, loss, ce_loss, 1.0)
                     mean_sim_list.append(mean_sim)
                     Used_beta = get_grad_beta_updatae(args.beta, mean_sim_list, int(args.grad_steps))
                 else:
                     optimizer.zero_grad()
-                    scaler.scale(ce_loss).backward()
+                    loss = ce_loss + args.lambda_adv * adv_loss
+                    scaler.scale(loss).backward()
                     scaler.step(optimizer)
 
                 scaler.update()

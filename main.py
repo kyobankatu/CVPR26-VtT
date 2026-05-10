@@ -17,6 +17,7 @@ def main():
 
     # Load config file
     args = get_arguments()
+    print("Arguments parsed.")
     # if(args.dataset == 'ChestX'):
     #     args.epochs = int(args.epochs/ 2)
     #     args.lr = 4e-4
@@ -27,13 +28,16 @@ def main():
     #     args.mamba_lr = 1e-3
     
     set_random_seed(args.seed)
+    print("Random seed set.")
     
     # CLIP
+    print(f"Loading CLIP backbone: {args.backbone}")
     clip_model, preprocess = clip.load(args.backbone)
     #print(preprocess.transforms[4])
     clip_model = clip_model.half()
     clip_model.eval()
     logit_scale = 100
+    print("CLIP backbone loaded.")
 
     # Prepare dataset
     print("Preparing dataset.")
@@ -59,7 +63,7 @@ def main():
     #     datamgr = Pattern_few_shot_da.SetDataManager(image_size, n_eposide=iter_num, **few_shot_params)
     #     novel_loader = datamgr.get_data_loader(aug=True)
 
-
+    print("Dataset loader ready.")
     run_lora(args, clip_model, logit_scale, test_loader)
 
 if __name__ == '__main__':

@@ -39,6 +39,8 @@ def get_arguments():
     parser.add_argument('--beta', type=float, default=7)
     parser.add_argument('--grad_steps', type=int, default=50)
     parser.add_argument('--prompt_template', type=str, default='a photo of a {}.', help='prompt template used to build class text')
+    parser.add_argument('--lambda_adv', type=float, default=0.0, help='weight for token-space adversarial loss on image_mae_encode')
+    parser.add_argument('--disc_lr', type=float, default=1e-4, help='learning rate for the token discriminator')
 
     args = parser.parse_args()
 
