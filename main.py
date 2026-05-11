@@ -8,7 +8,6 @@ import clip
 from fslcd_datasets_aug2 import ISIC_few_shot_da,  CropDisease_few_shot_da, Chest_few_shot_da, EuroSAT_few_shot_da#, CropDisease_few_shot_da, Chest_few_shot_da, Pattern_few_shot_da
 from utils import *
 from run_utils import *
-from VtT import run_lora
 from fsl_dataset.dataloader import EpisodeSampler, RepeatSampler
 from fsl_dataset.dataset import DatasetWithTextLabel
 
@@ -64,6 +63,7 @@ def main():
     #     novel_loader = datamgr.get_data_loader(aug=True)
 
     print("Dataset loader ready.")
+    from VtT import run_lora
     run_lora(args, clip_model, logit_scale, test_loader)
 
 if __name__ == '__main__':
