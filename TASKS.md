@@ -454,6 +454,43 @@ Interpretation:
 - `lora_aux_scale=0.0`: complete split.
 - `lora_aux_scale=1.0`: original shared auxiliary gradient.
 
+### Follow-up: Positive-Only Auxiliary Gradient
+
+Motivation:
+
+- VtT branch can be weaker than `full acc`, so using it as a teacher is risky.
+- The useful signal is not the branch accuracy itself, but whether the VtT auxiliary gradient agrees with the classification gradient.
+
+Change:
+
+- [x] Add `--grad_filter positive`.
+- [x] For each LoRA parameter, keep the auxiliary gradient only when:
+
+```text
+cos(grad_ce, grad_mae) > 0
+```
+
+- [x] Drop the auxiliary gradient for that LoRA parameter when the cosine similarity is negative.
+- [x] Keep the original paper behavior as the default:
+
+```text
+--grad_filter prograd --lora_aux_scale 1 --residual_scale -1
+```
+
+Initial commands:
+
+```bash
+ybatch execute.sh --dataset EuroSAT --seed 1 --grad_filter prograd --lora_aux_scale 1 --residual_scale -1
+ybatch execute.sh --dataset EuroSAT --seed 1 --grad_filter positive --lora_aux_scale 1 --residual_scale -1
+ybatch execute.sh --dataset EuroSAT --seed 1 --grad_filter positive --lora_aux_scale 0.5 --residual_scale -1
+```
+
+If the non-residual version helps, combine with residual:
+
+```bash
+ybatch execute.sh --dataset EuroSAT --seed 1 --grad_filter positive --lora_aux_scale 0.5 --residual_scale 0.05
+```
+
 ---
 
 ## Recommended Next Commands

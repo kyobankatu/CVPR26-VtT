@@ -149,6 +149,49 @@ def split_backward_and_update(model, optim, scaler, ce_loss, mae_loss, beta, lor
     return model, optim, scaler, (mean_sim / sim_count).detach().cpu().numpy()
 
 
+def positive_backward_and_update(model, optim, scaler, ce_loss, mae_loss, beta, lora_aux_scale):
+    optim.zero_grad()
+
+    if not torch.isfinite(ce_loss).all():
+        raise FloatingPointError("Loss is infinite or NaN!")
+
+    if beta > 0 and not torch.isfinite(mae_loss).all():
+        raise FloatingPointError("Loss is infinite or NaN!")
+
+    scaler.scale(ce_loss).backward(retain_graph=beta > 0)
+    lora_grads = []
+
+    for name, p in model.named_parameters():
+        if 'lora_' in name and p.grad is not None:
+            lora_grads.append((p, p.grad.clone()))
+
+    mean_sim = torch.tensor(0).float().cuda()
+    sim_count = 0
+
+    if beta > 0:
+        scaler.scale(beta * mae_loss).backward()
+        for p, ce_grad in lora_grads:
+            if p.grad is None:
+                continue
+            aux_grad = p.grad - ce_grad
+            ce_norm = torch.linalg.norm(ce_grad)
+            aux_norm = torch.linalg.norm(aux_grad)
+            keep_aux = False
+            if ce_norm > 0 and aux_norm > 0:
+                sim = torch.dot((ce_grad / ce_norm).flatten(), (aux_grad / aux_norm).flatten())
+                if torch.isfinite(sim):
+                    mean_sim += sim
+                    sim_count += 1
+                    keep_aux = sim > 0
+            p.grad = ce_grad + lora_aux_scale * aux_grad if keep_aux else ce_grad
+
+    scaler.step(optim)
+
+    if sim_count == 0:
+        return model, optim, scaler, 1.0
+    return model, optim, scaler, (mean_sim / sim_count).detach().cpu().numpy()
+
+
 class Adapter(nn.Module):
     def __init__(self, clip_model, ctx_init, c_in, reduction=4):
         super(Adapter, self).__init__()
@@ -388,8 +431,18 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
 
                 if(Used_beta > 0):
                     loss = ce_loss + Used_beta * mae_loss
-                    if args.lora_aux_scale == 1:
+                    if args.grad_filter == 'prograd' and args.lora_aux_scale == 1:
                         clip_model, optimizer, scaler, mean_sim = prograd_backward_and_update(clip_model, optimizer, scaler, loss, ce_loss, 1.0)
+                    elif args.grad_filter == 'positive':
+                        clip_model, optimizer, scaler, mean_sim = positive_backward_and_update(
+                            clip_model,
+                            optimizer,
+                            scaler,
+                            ce_loss,
+                            mae_loss,
+                            Used_beta,
+                            args.lora_aux_scale,
+                        )
                     else:
                         clip_model, optimizer, scaler, mean_sim = split_backward_and_update(
                             clip_model,
