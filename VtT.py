@@ -69,6 +69,12 @@ def variance_regularization(x, target_std=1.0, eps=1e-4):
     return torch.mean(F.relu(target_std - std))
 
 
+def beta_warmup_scale(step, warmup_steps):
+    if warmup_steps <= 0:
+        return 1.0
+    return min(1.0, float(step + 1) / float(warmup_steps))
+
+
 def prograd_backward_and_update(model, optim, scaler, loss_a, loss_b, lambda_=1, names=None):
     optim.zero_grad()
 
@@ -245,7 +251,8 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
 
         clip_model = copy.deepcopy(clip_model_zs)
         mamba_net = Mamba_Net().cuda()
-        visual_align_proj = VisualAlignProjection(dim=512).cuda()
+        use_align_regularization = args.lambda_align > 0 or args.lambda_var > 0
+        visual_align_proj = VisualAlignProjection(dim=512).cuda() if use_align_regularization else None
         mamba_params = []
         for name, param in mamba_net.named_parameters():
             mamba_params.append(param)
@@ -283,15 +290,17 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
             text_features = class_embeddings/class_embeddings.norm(dim=-1, keepdim=True)
 
         clip_model.train()
-        visual_align_proj.train()
+        if visual_align_proj is not None:
+            visual_align_proj.train()
         batch_size = 25
         support_size = supp_images.size(0)
 
         parameters_to_update = [
             {'params': mamba_params, 'lr': args.mamba_lr},
-            {'params': visual_align_proj.parameters(), 'lr': args.mamba_lr},
             {'params': lora_parameters},
         ]
+        if visual_align_proj is not None:
+            parameters_to_update.insert(1, {'params': visual_align_proj.parameters(), 'lr': args.mamba_lr})
         optimizer = torch.optim.AdamW(parameters_to_update, weight_decay=1e-2, betas=(0.9, 0.999), lr=args.lr)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, total_iters * 8, eta_min=1e-6)
         scaler = torch.cuda.amp.GradScaler()
@@ -344,18 +353,25 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
                 mae_cosine_similarity = image_features @ mae_text_features.t()
                 mae_loss = -torch.diag(mae_cosine_similarity).mean()
 
-                aligned_visual_target = visual_align_proj(image_features_raw.float().detach())
-                align_loss = 1 - F.cosine_similarity(
-                    F.normalize(image_mae_encode.float(), dim=-1),
-                    F.normalize(aligned_visual_target, dim=-1),
-                    dim=-1,
-                ).mean()
-                var_loss = variance_regularization(image_mae_encode.float())
+                align_loss = image_mae_encode.new_tensor(0.0)
+                var_loss = image_mae_encode.new_tensor(0.0)
+                if visual_align_proj is not None:
+                    if args.lambda_align > 0:
+                        aligned_visual_target = visual_align_proj(image_features_raw.float().detach())
+                        align_loss = 1 - F.cosine_similarity(
+                            F.normalize(image_mae_encode.float(), dim=-1),
+                            F.normalize(aligned_visual_target, dim=-1),
+                            dim=-1,
+                        ).mean()
+                    if args.lambda_var > 0:
+                        var_loss = variance_regularization(image_mae_encode.float())
+
+                effective_beta = Used_beta * beta_warmup_scale(count_iters, args.beta_warmup_steps)
 
                 if(Used_beta > 0):
                     loss = (
                         ce_loss
-                        + Used_beta * mae_loss
+                        + effective_beta * mae_loss
                         + args.lambda_align * align_loss
                         + args.lambda_var * var_loss
                     )

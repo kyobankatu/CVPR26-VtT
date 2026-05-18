@@ -219,6 +219,163 @@ Goal: replace the generic natural-image prompt with a satellite-imagery-aware pr
 - [ ] If the satellite prompt helps, test one stronger variant:
   - `a satellite image of {} land cover.`
 
+---
+
+## Current Non-Attribute Track: Failed Align/Variance Regularization
+
+Goal: document the recent non-attribute attempt and avoid re-testing the same weak direction.
+
+### Result Summary
+
+The `image_mae_encode` visual-alignment and variance-regularization approach was tested with:
+
+- `lambda_align`
+- `lambda_var`
+
+The best EuroSAT setting observed was around:
+
+- `lambda_align=0.01`
+- `lambda_var=0.002`
+
+However, after comparing across datasets, this direction degraded performance on all datasets. Treat this as a failed direction unless a substantially different formulation is introduced.
+
+Likely reason:
+
+- The paper's strongest inference setting removes the VtT auxiliary branch at test time.
+- Directly constraining `image_mae_encode` can still distort LoRA/CLIP adaptation during training.
+- Strong alignment can help early episodes but later restricts useful task adaptation.
+
+Decision:
+
+- [x] Do not continue broad sweeps of `lambda_align` / `lambda_var`.
+- [ ] Remove or disable this branch before the next main experiment unless it is needed for ablation records.
+
+Files:
+
+- `VtT.py`
+- `run_utils.py`
+- `execute.sh`
+
+---
+
+## Next Improvement Direction: Control the VtT Auxiliary Loss Instead of Adding New Feature Losses
+
+Goal: make VtT helpful during training without letting its auxiliary objective damage the main CLIP+LoRA branch.
+
+Rationale:
+
+- Since VtT is removed at inference in the strongest reported setting, the main goal is not to make the VtT branch itself stronger.
+- The safer target is to prevent `mae_loss` from pulling the trainable LoRA parameters away from the classification objective.
+- The current code already computes gradient similarity between `ce_loss` and `mae_loss`, but the beta update is coarse and can be made more stable.
+
+### Phase N1: Beta Warmup
+
+Add a schedule for the auxiliary weight:
+
+```text
+effective_beta = beta * min(1, step / beta_warmup_steps)
+```
+
+Tasks:
+
+- [ ] Add `--beta_warmup_steps` to `run_utils.py`.
+- [ ] Use `effective_beta` instead of raw `Used_beta` inside `VtT.py`.
+- [ ] Start with:
+  - `beta_warmup_steps=50`
+  - `beta=7`
+- [ ] Compare against baseline on:
+  - EuroSAT
+  - CropDisease
+  - ISIC
+  - ChestX
+
+Expected benefit:
+
+- Avoids applying a strong VtT auxiliary signal before the Mamba branch is stable.
+
+### Phase N2: Conflict-Aware Beta Gating
+
+Use gradient agreement between `ce_loss` and `mae_loss` to decide whether the auxiliary objective should be active.
+
+Proposed rule:
+
+```text
+if mean_sim < beta_conflict_threshold:
+    effective_beta = beta * beta_min_scale
+else:
+    effective_beta = beta
+```
+
+Initial settings:
+
+- `beta_conflict_threshold=0.0`
+- `beta_min_scale=0.0`
+
+Alternative softer setting:
+
+- `beta_conflict_threshold=0.1`
+- `beta_min_scale=0.2`
+
+Tasks:
+
+- [ ] Add `--beta_conflict_threshold`.
+- [ ] Add `--beta_min_scale`.
+- [ ] Replace the current `get_grad_beta_updatae()` behavior with a bounded scale instead of returning `-1`.
+- [ ] Log the average effective beta per episode.
+
+Expected benefit:
+
+- Suppresses VtT training signal only when it conflicts with classification.
+- Preserves VtT when it aligns with the main task.
+
+### Phase N3: Class-Prototype Consistency for VtT Outputs
+
+If N1/N2 are stable, add a lightweight class-consistency term for the VtT-produced text features.
+
+Design:
+
+- Build class prototypes from `mae_text_features` inside each support episode.
+- Pull same-class VtT outputs toward their class prototype.
+- Keep the coefficient small.
+
+Initial setting:
+
+- `lambda_proto=0.01`
+
+Tasks:
+
+- [ ] Add `--lambda_proto`.
+- [ ] Implement prototype consistency on normalized `mae_text_features`.
+- [ ] Run only after beta warmup/gating is validated.
+
+Expected benefit:
+
+- Makes the auxiliary branch less noisy without forcing it into image-feature space.
+
+---
+
+## Recommended Next Commands
+
+First validate the baseline and the new beta-control variant with the same seed.
+
+Baseline:
+
+```bash
+ybatch execute.sh --dataset EuroSAT --seed 1 --lambda_align 0 --lambda_var 0
+```
+
+After implementing Phase N1:
+
+```bash
+ybatch execute.sh --dataset EuroSAT --seed 1 --lambda_align 0 --lambda_var 0 --beta_warmup_steps 50
+```
+
+After implementing Phase N2:
+
+```bash
+ybatch execute.sh --dataset EuroSAT --seed 1 --lambda_align 0 --lambda_var 0 --beta_warmup_steps 50 --beta_conflict_threshold 0.0 --beta_min_scale 0.0
+```
+
 Files:
 
 - `main.py`
