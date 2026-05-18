@@ -62,50 +62,46 @@ def apply_residual_absorb_token(mamba_output, base_token, residual_scale):
     return base_token.to(dtype=mamba_output.dtype, device=mamba_output.device) + residual_scale * mamba_output
 
 
-def prograd_backward_and_update(model, optim, scaler, loss_a, loss_b, lambda_=1, names=None):
+def split_backward_and_update(model, optim, scaler, ce_loss, mae_loss, beta):
     optim.zero_grad()
 
-    if not torch.isfinite(loss_b).all():
+    if not torch.isfinite(ce_loss).all():
         raise FloatingPointError("Loss is infinite or NaN!")
 
-    scaler.scale(loss_b).backward(retain_graph=True)
-    b_grads = []
+    if beta > 0 and not torch.isfinite(mae_loss).all():
+        raise FloatingPointError("Loss is infinite or NaN!")
+
+    scaler.scale(ce_loss).backward(retain_graph=beta > 0)
+    lora_grads = []
 
     for name, p in model.named_parameters():
-        if 'lora_' in name:
-            b_grads.append(p.grad.clone())
-
-    optim.zero_grad()
-
-    if not torch.isfinite(loss_a).all():
-        raise FloatingPointError("Loss is infinite or NaN!")
-    
-    scaler.scale(loss_a).backward()
-    i = 0
+        if 'lora_' in name and p.grad is not None:
+            lora_grads.append((p, p.grad.clone()))
 
     mean_sim = torch.tensor(0).float().cuda()
-    for name, p in model.named_parameters():
-        if 'lora_' not in name:
-            continue
-        b_grad = b_grads[i]
-        b_grad_norm = b_grad / torch.linalg.norm(b_grad)
-        a_grad = p.grad.clone()
-        a_grad_norm = a_grad / torch.linalg.norm(a_grad)
+    sim_count = 0
 
-        if(not torch.isnan(torch.dot(a_grad_norm.flatten(), b_grad_norm.flatten())).any()):
-            mean_sim += torch.dot(a_grad_norm.flatten(), b_grad_norm.flatten())
-        else:
-            mean_sim += 1
-        if torch.dot(a_grad_norm.flatten(), b_grad_norm.flatten()) < 0:
-            p.grad = a_grad - lambda_ * torch.dot(
-                a_grad.flatten(), b_grad_norm.flatten()
-            ) * b_grad_norm
-        
-        i+=1
+    if beta > 0:
+        scaler.scale(beta * mae_loss).backward()
+        for p, ce_grad in lora_grads:
+            if p.grad is None:
+                continue
+            aux_grad = p.grad - ce_grad
+            ce_norm = torch.linalg.norm(ce_grad)
+            aux_norm = torch.linalg.norm(aux_grad)
+            if ce_norm > 0 and aux_norm > 0:
+                sim = torch.dot((ce_grad / ce_norm).flatten(), (aux_grad / aux_norm).flatten())
+                if torch.isfinite(sim):
+                    mean_sim += sim
+                    sim_count += 1
+            # Keep LoRA as a pure classifier adapter; VtT auxiliary gradients update Mamba only.
+            p.grad = ce_grad
 
     scaler.step(optim)
 
-    return model, optim, scaler, (mean_sim / i).detach().cpu().numpy()
+    if sim_count == 0:
+        return model, optim, scaler, 1.0
+    return model, optim, scaler, (mean_sim / sim_count).detach().cpu().numpy()
 
 
 class Adapter(nn.Module):
@@ -343,8 +339,14 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
                 mae_loss = -torch.diag(mae_cosine_similarity).mean()
 
                 if(Used_beta > 0):
-                    loss = ce_loss + Used_beta * mae_loss
-                    clip_model, optimizer, scaler, mean_sim = prograd_backward_and_update(clip_model, optimizer, scaler, loss, ce_loss, 1.0)
+                    clip_model, optimizer, scaler, mean_sim = split_backward_and_update(
+                        clip_model,
+                        optimizer,
+                        scaler,
+                        ce_loss,
+                        mae_loss,
+                        Used_beta,
+                    )
                     mean_sim_list.append(mean_sim)
                     Used_beta = get_grad_beta_updatae(args.beta, mean_sim_list, int(args.grad_steps))
                 else:

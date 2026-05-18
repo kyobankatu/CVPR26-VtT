@@ -409,6 +409,23 @@ Expected benefit:
 - Mamba only needs to learn visual correction.
 - The all-layer VtT input path remains intact.
 
+### Follow-up: Split LoRA and Mamba Gradients
+
+Observation:
+
+- Residual absorb tokens improve the VtT-only branch, but can reduce `full acc`.
+- This suggests the auxiliary `mae_loss` can still pull LoRA away from the classifier objective even when the auxiliary branch becomes cleaner.
+
+Change:
+
+- [x] Update LoRA using `ce_loss` only.
+- [x] Update Mamba using `mae_loss` only.
+- [x] Keep the existing gradient-similarity diagnostic for deciding whether the auxiliary signal should remain active.
+
+Expected benefit:
+
+- VtT can improve its own auxiliary path without damaging the inference-time CLIP+LoRA branch.
+
 ---
 
 ## Recommended Next Commands
