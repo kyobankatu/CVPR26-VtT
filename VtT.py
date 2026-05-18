@@ -48,14 +48,6 @@ class Mamba_Net(nn.Module):
 _tokenizer = _Tokenizer()
 
 
-class VisualAlignProjection(nn.Module):
-    def __init__(self, dim=512, hidden_dim=256):
-        super().__init__()
-        self.net = nn.Linear(dim, dim, bias=False)
-
-    def forward(self, x):
-        return self.net(x)
-
 def format_prompt(template, text):
     return template.format(text.replace('_', ' '))
 
@@ -64,15 +56,10 @@ def placeholder_prompt(template, placeholder="x"):
     return format_prompt(template, placeholder)
 
 
-def variance_regularization(x, target_std=1.0, eps=1e-4):
-    std = torch.sqrt(x.var(dim=0) + eps)
-    return torch.mean(F.relu(target_std - std))
-
-
-def beta_warmup_scale(step, warmup_steps):
-    if warmup_steps <= 0:
-        return 1.0
-    return min(1.0, float(step + 1) / float(warmup_steps))
+def apply_residual_absorb_token(mamba_output, base_token, residual_scale):
+    if residual_scale < 0:
+        return mamba_output
+    return base_token.to(dtype=mamba_output.dtype, device=mamba_output.device) + residual_scale * mamba_output
 
 
 def prograd_backward_and_update(model, optim, scaler, loss_a, loss_b, lambda_=1, names=None):
@@ -251,8 +238,6 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
 
         clip_model = copy.deepcopy(clip_model_zs)
         mamba_net = Mamba_Net().cuda()
-        use_align_regularization = args.lambda_align > 0 or args.lambda_var > 0
-        visual_align_proj = VisualAlignProjection(dim=512).cuda() if use_align_regularization else None
         mamba_params = []
         for name, param in mamba_net.named_parameters():
             mamba_params.append(param)
@@ -284,14 +269,13 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
             emp_full_texts = [format_prompt(args.prompt_template, '') for classname in class_texts]
             with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
                 texts = clip.tokenize(full_texts).cuda()
+                class_absorb_tokens = clip_model.token_embedding(texts)[:, 5].detach()
                 class_embeddings, class_embeddings_all = clip_model.encode_text(texts, ret_all = True)
                 emp_texts = clip.tokenize(emp_full_texts).cuda()
                 emp_class_embeddings, emp_class_embeddings_all = clip_model.encode_text(emp_texts, ret_all = True)
             text_features = class_embeddings/class_embeddings.norm(dim=-1, keepdim=True)
 
         clip_model.train()
-        if visual_align_proj is not None:
-            visual_align_proj.train()
         batch_size = 25
         support_size = supp_images.size(0)
 
@@ -299,8 +283,6 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
             {'params': mamba_params, 'lr': args.mamba_lr},
             {'params': lora_parameters},
         ]
-        if visual_align_proj is not None:
-            parameters_to_update.insert(1, {'params': visual_align_proj.parameters(), 'lr': args.mamba_lr})
         optimizer = torch.optim.AdamW(parameters_to_update, weight_decay=1e-2, betas=(0.9, 0.999), lr=args.lr)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, total_iters * 8, eta_min=1e-6)
         scaler = torch.cuda.amp.GradScaler()
@@ -317,6 +299,7 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
                     emp_full_texts = [format_prompt(args.prompt_template, '') for classname in class_texts]
                     with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
                         texts = clip.tokenize(full_texts).cuda()
+                        class_absorb_tokens = clip_model.token_embedding(texts)[:, 5].detach()
                         class_embeddings, class_embeddings_all = clip_model.encode_text(texts, ret_all = True)
                         emp_texts = clip.tokenize(emp_full_texts).cuda()
                     text_features = class_embeddings/class_embeddings.norm(dim=-1, keepdim=True)
@@ -343,6 +326,12 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
                 cat_input = cat_input.view(cat_input.size(0), 5,5,cat_input.size(-1))
                 with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
                     image_mae_encode = mamba_net(cat_input)
+                base_absorb_tokens = class_absorb_tokens[y_batch]
+                image_mae_encode = apply_residual_absorb_token(
+                    image_mae_encode,
+                    base_absorb_tokens,
+                    args.residual_scale,
+                )
 
                 temp_texts = [placeholder_prompt(args.prompt_template) for _ in range(len(image_mae_encode))]
                 with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
@@ -353,34 +342,14 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
                 mae_cosine_similarity = image_features @ mae_text_features.t()
                 mae_loss = -torch.diag(mae_cosine_similarity).mean()
 
-                align_loss = image_mae_encode.new_tensor(0.0)
-                var_loss = image_mae_encode.new_tensor(0.0)
-                if visual_align_proj is not None:
-                    if args.lambda_align > 0:
-                        aligned_visual_target = visual_align_proj(image_features_raw.float().detach())
-                        align_loss = 1 - F.cosine_similarity(
-                            F.normalize(image_mae_encode.float(), dim=-1),
-                            F.normalize(aligned_visual_target, dim=-1),
-                            dim=-1,
-                        ).mean()
-                    if args.lambda_var > 0:
-                        var_loss = variance_regularization(image_mae_encode.float())
-
-                effective_beta = Used_beta * beta_warmup_scale(count_iters, args.beta_warmup_steps)
-
                 if(Used_beta > 0):
-                    loss = (
-                        ce_loss
-                        + effective_beta * mae_loss
-                        + args.lambda_align * align_loss
-                        + args.lambda_var * var_loss
-                    )
+                    loss = ce_loss + Used_beta * mae_loss
                     clip_model, optimizer, scaler, mean_sim = prograd_backward_and_update(clip_model, optimizer, scaler, loss, ce_loss, 1.0)
                     mean_sim_list.append(mean_sim)
                     Used_beta = get_grad_beta_updatae(args.beta, mean_sim_list, int(args.grad_steps))
                 else:
                     optimizer.zero_grad()
-                    loss = ce_loss + args.lambda_align * align_loss + args.lambda_var * var_loss
+                    loss = ce_loss
                     scaler.scale(loss).backward()
                     scaler.step(optimizer)
 
@@ -437,6 +406,7 @@ def fsl_test(args, clip_model, query_images, query_label, class_texts, mamba_net
         with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
             texts = clip.tokenize(texts).cuda()
             emp_full_texts = clip.tokenize(emp_full_texts).cuda()
+            class_absorb_tokens = clip_model.token_embedding(texts)[:, 5].detach()
             class_embeddings, class_embeddings_all = clip_model.encode_text(texts, ret_all=True)
             emp_class_embeddings, emp_class_embeddings_all = clip_model.encode_text(emp_full_texts, ret_all=True)
         text_features = class_embeddings/class_embeddings.norm(dim=-1, keepdim=True)
@@ -467,6 +437,12 @@ def fsl_test(args, clip_model, query_images, query_label, class_texts, mamba_net
         cat_input = cat_input.view(cat_input.size(0), 5,5,cat_input.size(-1))
         with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
             image_mae_encode = mamba_net(cat_input)
+        base_absorb_tokens = class_absorb_tokens[supp_label_noAug]
+        image_mae_encode = apply_residual_absorb_token(
+            image_mae_encode,
+            base_absorb_tokens,
+            args.residual_scale,
+        )
 
         temp_texts = [placeholder_prompt(args.prompt_template) for _ in range(len(image_mae_encode))]
         with torch.amp.autocast(device_type="cuda", dtype=torch.float16):

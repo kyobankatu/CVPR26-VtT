@@ -354,26 +354,84 @@ Expected benefit:
 
 ---
 
+## Next Structural Direction: Text Residual Absorb Token
+
+Goal: improve the absorb token construction while preserving the paper's finding that all text layers should be used.
+
+Decision:
+
+- Do not pursue layer selection or layer gating because the paper reports that using all text layers is best.
+- Instead, keep the all-layer Mamba input unchanged and change only the way the final absorb token is formed.
+
+### Motivation
+
+The failed variants pushed `image_mae_encode` toward the wrong target:
+
+- `adv` made it too text-token-like.
+- `align/var` tied it too directly to image features.
+- `beta_warmup` weakened the original auxiliary signal and reduced performance.
+
+The new hypothesis is that Mamba should not synthesize the full absorb token from scratch. It should predict a visual residual on top of the original class text token.
+
+### Proposed Form
+
+Instead of:
+
+```text
+absorb_token = mamba_output
+```
+
+use:
+
+```text
+absorb_token = class_text_token_at_position_5 + residual_scale * mamba_output
+```
+
+Initial settings:
+
+- `residual_scale=0.05`
+- `residual_scale=0.1`
+- `residual_scale=0.2`
+
+Tasks:
+
+- [x] Add `--residual_scale`; use a negative value to preserve the original behavior.
+- [x] Apply the residual absorb token in the training path.
+- [x] Apply the same residual absorb token in `fsl_test`.
+- [ ] Run EuroSAT 1-shot with:
+  - baseline: `--residual_scale -1`
+  - residual: `--residual_scale 0.1`
+- [ ] If EuroSAT improves, test CropDisease, ISIC, and ChestX.
+
+Expected benefit:
+
+- The class text token preserves semantic identity.
+- Mamba only needs to learn visual correction.
+- The all-layer VtT input path remains intact.
+
+---
+
 ## Recommended Next Commands
 
-First validate the baseline and the new beta-control variant with the same seed.
+First validate the baseline and the text-residual variant with the same seed.
 
 Baseline:
 
 ```bash
-ybatch execute.sh --dataset EuroSAT --seed 1 --lambda_align 0 --lambda_var 0
+ybatch execute.sh --dataset EuroSAT --seed 1 --residual_scale -1
 ```
 
-After implementing Phase N1:
+Residual absorb token:
 
 ```bash
-ybatch execute.sh --dataset EuroSAT --seed 1 --lambda_align 0 --lambda_var 0 --beta_warmup_steps 50
+ybatch execute.sh --dataset EuroSAT --seed 1 --residual_scale 0.1
 ```
 
-After implementing Phase N2:
+Scale sweep:
 
 ```bash
-ybatch execute.sh --dataset EuroSAT --seed 1 --lambda_align 0 --lambda_var 0 --beta_warmup_steps 50 --beta_conflict_threshold 0.0 --beta_min_scale 0.0
+ybatch execute.sh --dataset EuroSAT --seed 1 --residual_scale 0.05
+ybatch execute.sh --dataset EuroSAT --seed 1 --residual_scale 0.2
 ```
 
 Files:

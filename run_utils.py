@@ -37,11 +37,7 @@ def get_arguments():
     parser.add_argument('--beta', type=float, default=7)
     parser.add_argument('--grad_steps', type=int, default=50)
     parser.add_argument('--prompt_template', type=str, default='a photo of a {}.', help='prompt template used to build class text')
-    parser.add_argument('--lambda_adv', type=float, default=0.0, help='weight for token-space adversarial loss on image_mae_encode')
-    parser.add_argument('--disc_lr', type=float, default=1e-4, help='learning rate for the token discriminator')
-    parser.add_argument('--lambda_align', type=float, default=0.0, help='weight for visual-alignment loss on image_mae_encode')
-    parser.add_argument('--lambda_var', type=float, default=0.0, help='weight for variance regularization on image_mae_encode')
-    parser.add_argument('--beta_warmup_steps', type=int, default=0, help='number of inner-loop steps used to warm up beta; disabled when 0')
+    parser.add_argument('--residual_scale', type=float, default=-1.0, help='scale for residual absorb token; negative keeps original Mamba-only absorb token')
 
     args = parser.parse_args()
 
