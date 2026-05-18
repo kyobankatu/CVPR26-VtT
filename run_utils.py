@@ -38,6 +38,7 @@ def get_arguments():
     parser.add_argument('--grad_steps', type=int, default=50)
     parser.add_argument('--prompt_template', type=str, default='a photo of a {}.', help='prompt template used to build class text')
     parser.add_argument('--residual_scale', type=float, default=-1.0, help='scale for residual absorb token; negative keeps original Mamba-only absorb token')
+    parser.add_argument('--lora_aux_scale', type=float, default=1.0, help='fraction of VtT auxiliary gradient kept for LoRA parameters')
 
     args = parser.parse_args()
 

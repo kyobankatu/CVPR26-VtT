@@ -426,6 +426,34 @@ Expected benefit:
 
 - VtT can improve its own auxiliary path without damaging the inference-time CLIP+LoRA branch.
 
+### Follow-up: Partial Auxiliary Gradient to LoRA
+
+Observation:
+
+- Full split can reduce `full acc`, suggesting that some VtT auxiliary gradient may be useful for LoRA.
+- Full sharing can also hurt when the auxiliary branch pulls too strongly.
+
+Change:
+
+- [x] Add `--lora_aux_scale`.
+- [x] Use:
+
+```text
+LoRA grad = ce_grad + lora_aux_scale * mae_grad
+Mamba grad = beta * mae_grad
+```
+
+Initial settings:
+
+- `lora_aux_scale=0.1`
+- `lora_aux_scale=0.2`
+- `lora_aux_scale=0.5`
+
+Interpretation:
+
+- `lora_aux_scale=0.0`: complete split.
+- `lora_aux_scale=1.0`: original shared auxiliary gradient.
+
 ---
 
 ## Recommended Next Commands

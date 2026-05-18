@@ -62,7 +62,53 @@ def apply_residual_absorb_token(mamba_output, base_token, residual_scale):
     return base_token.to(dtype=mamba_output.dtype, device=mamba_output.device) + residual_scale * mamba_output
 
 
-def split_backward_and_update(model, optim, scaler, ce_loss, mae_loss, beta):
+def prograd_backward_and_update(model, optim, scaler, loss_a, loss_b, lambda_=1, names=None):
+    optim.zero_grad()
+
+    if not torch.isfinite(loss_b).all():
+        raise FloatingPointError("Loss is infinite or NaN!")
+
+    scaler.scale(loss_b).backward(retain_graph=True)
+    b_grads = []
+
+    for name, p in model.named_parameters():
+        if 'lora_' in name:
+            b_grads.append(p.grad.clone())
+
+    optim.zero_grad()
+
+    if not torch.isfinite(loss_a).all():
+        raise FloatingPointError("Loss is infinite or NaN!")
+
+    scaler.scale(loss_a).backward()
+    i = 0
+
+    mean_sim = torch.tensor(0).float().cuda()
+    for name, p in model.named_parameters():
+        if 'lora_' not in name:
+            continue
+        b_grad = b_grads[i]
+        b_grad_norm = b_grad / torch.linalg.norm(b_grad)
+        a_grad = p.grad.clone()
+        a_grad_norm = a_grad / torch.linalg.norm(a_grad)
+
+        if(not torch.isnan(torch.dot(a_grad_norm.flatten(), b_grad_norm.flatten())).any()):
+            mean_sim += torch.dot(a_grad_norm.flatten(), b_grad_norm.flatten())
+        else:
+            mean_sim += 1
+        if torch.dot(a_grad_norm.flatten(), b_grad_norm.flatten()) < 0:
+            p.grad = a_grad - lambda_ * torch.dot(
+                a_grad.flatten(), b_grad_norm.flatten()
+            ) * b_grad_norm
+
+        i+=1
+
+    scaler.step(optim)
+
+    return model, optim, scaler, (mean_sim / i).detach().cpu().numpy()
+
+
+def split_backward_and_update(model, optim, scaler, ce_loss, mae_loss, beta, lora_aux_scale):
     optim.zero_grad()
 
     if not torch.isfinite(ce_loss).all():
@@ -94,8 +140,7 @@ def split_backward_and_update(model, optim, scaler, ce_loss, mae_loss, beta):
                 if torch.isfinite(sim):
                     mean_sim += sim
                     sim_count += 1
-            # Keep LoRA as a pure classifier adapter; VtT auxiliary gradients update Mamba only.
-            p.grad = ce_grad
+            p.grad = ce_grad + lora_aux_scale * aux_grad
 
     scaler.step(optim)
 
@@ -265,7 +310,8 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
             emp_full_texts = [format_prompt(args.prompt_template, '') for classname in class_texts]
             with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
                 texts = clip.tokenize(full_texts).cuda()
-                class_absorb_tokens = clip_model.token_embedding(texts)[:, 5].detach()
+                if args.residual_scale >= 0:
+                    class_absorb_tokens = clip_model.token_embedding(texts)[:, 5].detach()
                 class_embeddings, class_embeddings_all = clip_model.encode_text(texts, ret_all = True)
                 emp_texts = clip.tokenize(emp_full_texts).cuda()
                 emp_class_embeddings, emp_class_embeddings_all = clip_model.encode_text(emp_texts, ret_all = True)
@@ -295,7 +341,8 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
                     emp_full_texts = [format_prompt(args.prompt_template, '') for classname in class_texts]
                     with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
                         texts = clip.tokenize(full_texts).cuda()
-                        class_absorb_tokens = clip_model.token_embedding(texts)[:, 5].detach()
+                        if args.residual_scale >= 0:
+                            class_absorb_tokens = clip_model.token_embedding(texts)[:, 5].detach()
                         class_embeddings, class_embeddings_all = clip_model.encode_text(texts, ret_all = True)
                         emp_texts = clip.tokenize(emp_full_texts).cuda()
                     text_features = class_embeddings/class_embeddings.norm(dim=-1, keepdim=True)
@@ -322,12 +369,13 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
                 cat_input = cat_input.view(cat_input.size(0), 5,5,cat_input.size(-1))
                 with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
                     image_mae_encode = mamba_net(cat_input)
-                base_absorb_tokens = class_absorb_tokens[y_batch]
-                image_mae_encode = apply_residual_absorb_token(
-                    image_mae_encode,
-                    base_absorb_tokens,
-                    args.residual_scale,
-                )
+                if args.residual_scale >= 0:
+                    base_absorb_tokens = class_absorb_tokens[y_batch]
+                    image_mae_encode = apply_residual_absorb_token(
+                        image_mae_encode,
+                        base_absorb_tokens,
+                        args.residual_scale,
+                    )
 
                 temp_texts = [placeholder_prompt(args.prompt_template) for _ in range(len(image_mae_encode))]
                 with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
@@ -339,14 +387,19 @@ def run_lora(args, clip_model_zs, logit_scale, test_loader):
                 mae_loss = -torch.diag(mae_cosine_similarity).mean()
 
                 if(Used_beta > 0):
-                    clip_model, optimizer, scaler, mean_sim = split_backward_and_update(
-                        clip_model,
-                        optimizer,
-                        scaler,
-                        ce_loss,
-                        mae_loss,
-                        Used_beta,
-                    )
+                    loss = ce_loss + Used_beta * mae_loss
+                    if args.lora_aux_scale == 1:
+                        clip_model, optimizer, scaler, mean_sim = prograd_backward_and_update(clip_model, optimizer, scaler, loss, ce_loss, 1.0)
+                    else:
+                        clip_model, optimizer, scaler, mean_sim = split_backward_and_update(
+                            clip_model,
+                            optimizer,
+                            scaler,
+                            ce_loss,
+                            mae_loss,
+                            Used_beta,
+                            args.lora_aux_scale,
+                        )
                     mean_sim_list.append(mean_sim)
                     Used_beta = get_grad_beta_updatae(args.beta, mean_sim_list, int(args.grad_steps))
                 else:
@@ -408,7 +461,8 @@ def fsl_test(args, clip_model, query_images, query_label, class_texts, mamba_net
         with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
             texts = clip.tokenize(texts).cuda()
             emp_full_texts = clip.tokenize(emp_full_texts).cuda()
-            class_absorb_tokens = clip_model.token_embedding(texts)[:, 5].detach()
+            if args.residual_scale >= 0:
+                class_absorb_tokens = clip_model.token_embedding(texts)[:, 5].detach()
             class_embeddings, class_embeddings_all = clip_model.encode_text(texts, ret_all=True)
             emp_class_embeddings, emp_class_embeddings_all = clip_model.encode_text(emp_full_texts, ret_all=True)
         text_features = class_embeddings/class_embeddings.norm(dim=-1, keepdim=True)
@@ -439,12 +493,13 @@ def fsl_test(args, clip_model, query_images, query_label, class_texts, mamba_net
         cat_input = cat_input.view(cat_input.size(0), 5,5,cat_input.size(-1))
         with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
             image_mae_encode = mamba_net(cat_input)
-        base_absorb_tokens = class_absorb_tokens[supp_label_noAug]
-        image_mae_encode = apply_residual_absorb_token(
-            image_mae_encode,
-            base_absorb_tokens,
-            args.residual_scale,
-        )
+        if args.residual_scale >= 0:
+            base_absorb_tokens = class_absorb_tokens[supp_label_noAug]
+            image_mae_encode = apply_residual_absorb_token(
+                image_mae_encode,
+                base_absorb_tokens,
+                args.residual_scale,
+            )
 
         temp_texts = [placeholder_prompt(args.prompt_template) for _ in range(len(image_mae_encode))]
         with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
